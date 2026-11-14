@@ -338,6 +338,8 @@ MapFieldFailure("test_map_sight_write", "Mutation of map atom.sight");
 
 MapFieldFailure("test_map_output", "Map atom stringification is not implemented");
 
+MapFailure("empty area override prototypes are rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Area"]!["VarOverrides"] = new JsonObject(), "Map area variable overrides");
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

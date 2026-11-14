@@ -206,7 +206,7 @@ public sealed class DmRuntime {
                         ? defaultTurf.Id : throw new CompatibilityException("world.turf must contain a type reference for default map filling."));
                     RequireMapType(turfId, "/turf", "turf");
                     var turf = CreateStaticMapInstance(turfId);
-                    if (cell.Area?.VarOverrides is { Count: > 0 })
+                    if (cell.Area?.VarOverrides is not null)
                         throw new CompatibilityException("Map area variable overrides are not implemented.");
                     var areaId = cell.Area?.Type ?? (World.Variables.GetValueOrDefault("area").Value is DmTypeReference defaultArea
                         ? defaultArea.Id : throw new CompatibilityException("world.area must contain a type reference for default map filling."));

@@ -13,6 +13,11 @@ revision and opcode hash are checked separately by the build tooling and loader.
   prototypes of the same type share an area object. `MapCells` exposes these identities.
   DM reads of `loc` and coordinates use retained metadata, and instance methods can
   retain ordinary user-variable state. Diagnostic records remain separate snapshots.
+- Implements coordinate `locate(x, y, z)` using the retained turf index. Repeated
+  lookups return the same object. Finite numbers truncate toward zero before bounds
+  checking; non-numbers coerce to zero, and invalid/out-of-bounds coordinates return
+  null. Non-finite numeric inputs return null rather than relying on host casts.
+  Type/tag/container `locate()` and native contents views remain unsupported.
 - Executes `world.New()` and global/instance procedure calls using explicit call
   frames. Numeric values use `float`, matching the currently targeted DM model.
 - Allocates ordinary datums with inherited type initialization and `New()` on explicit

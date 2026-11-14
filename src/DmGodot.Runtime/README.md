@@ -19,6 +19,14 @@ revision and opcode hash are checked separately by the build tooling and loader.
   null. Non-finite numbers and truncated values outside the signed 32-bit integer
   range raise source-located compatibility errors; host overflow casts are unsupported.
   Type/tag/container `locate()` and native contents views remain unsupported.
+- Initializes map-area user variables from literal constants and fresh positional
+  list literals, including nested lists and inherited initializer overrides. The entire
+  inherited initializer chain is checked before that area's code executes. Only compiler
+  initializer super calls and own user-field assignments are accepted: helpers, reads,
+  output, globals, native/metadata assignments, object construction, sleep and spawn
+  remain errors. Constructor-time initialization has a fixed aggregate 100,000-instruction
+  budget (the configurable InstructionBudget applies after construction). This narrow
+  subset has no observable preboot effects; it does not implement general startup phases.
 - Starts static map `New()` callbacks after nonyielding global initialization: unique
   grid areas in ascending z/y/x order, then an unused default area, turfs in ascending z
   and descending y/x order, then movables in map/block order with bottom-up rows and
@@ -57,8 +65,8 @@ fixture/testing entry point, not a complete BYOND verb dispatch implementation.
 
 This is **not a complete BYOND world runtime**. Static map objects now retain identity;
 the host's initial avatar/movement protocol does not execute DM Login, Move,
-Enter/Exit, or collision callbacks. Executable map/world type
-initializers, sparse/overlapping maps, and map entity/area overrides are rejected
+Enter/Exit, or collision callbacks. Executable world/turf/movable type
+initializers and area initializers outside the local-literal subset, sparse/overlapping maps, and map entity/area overrides are rejected
 rather than silently ignored. Static identities are eagerly allocated before New;
 contents/type enumeration and dynamic atom creation remain unavailable, so this
 slice does not claim general construction timing parity. The default area is retained
@@ -99,7 +107,9 @@ python3 scripts/compile.py fixtures/smoke/smoke.dme --output build/smoke.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/semantics.dme --output build/semantics.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/semantics.dme --output build/semantics-optimized.json --optimize
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/map-new.dme --output build/map-new.json
-dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/area-init.dme --output build/area-init.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/area-init.dme --output build/area-init-optimized.json --optimize
+dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json build/area-init.json build/area-init-optimized.json
 ```
 
 Tests exercise code emitted by the real compiler, scheduler interactions, map

@@ -312,10 +312,10 @@ MapFailure("non-turf cell type rejected", j => j["Maps"]![0]!["CellDefinitions"]
 MapFailure("non-area cell type rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Area"]!["Type"] = TypeId(j, "/turf/floor"), "Map area must");
 MapFailure("non-movable mapped entity rejected", j => j["Maps"]![0]!["CellDefinitions"]!["c"]!["Objects"]![0]!["Type"] = TypeId(j, "/area/station"), "Map entity must");
 MapFailure("managed turf overrides are rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"] = new JsonObject { ["loc"] = null }, "Map turf override");
-MapFailure("default area executable initializer remains rejected", j => {
+MapFailure("malformed area initializer linkage is rejected", j => {
     foreach (var cell in j["Maps"]![0]!["CellDefinitions"]!.AsObject()) cell.Value!["Area"] = null;
     j["Types"]![TypeId(j, "/area")]!["InitProc"] = 1;
-}, "Type initializers");
+}, "Area initializer");
 void MapFieldFailure(string proc, string error) {
     tests.Add((error, () => {
         var runtime = new DmRuntime(CompiledProject.Load(path));
@@ -504,6 +504,44 @@ tests.Add(("map New separates spatial turf order from block and cell object orde
     runtime.AdvanceBy(1);
     Check(ordered.All(o => o.Variables["forwarding_count"].Number == 4), "Multi-block constructor continuations did not complete.");
 }));
+
+var areaInitPath = args.Length > 4 ? args[4] : "build/area-init.json";
+var areaInitOptimizedPath = args.Length > 5 ? args[5] : "build/area-init-optimized.json";
+tests.Add(("area list initialization agrees across compiler modes with isolated inherited defaults", () => {
+    string[]? reference = null;
+    foreach (var artifact in new[] { areaInitPath, areaInitOptimizedPath }) {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact));
+        var areas = runtime.MapCells.Select(c => c.Area).Distinct().ToArray();
+        Check(areas.Length == 5 && ReferenceEquals(runtime.MapCells[0].Area, runtime.MapCells[1].Area), "Shared area prototype was allocated twice.");
+        Check(areas.All(a => a.Variables["new_count"].Number == 0), "New ran during area initialization.");
+        Check(areas.Select(a => a.Variables["empty"].Value).Distinct().Count() == 5, "Empty lists shared across area identities.");
+        var firstList = (DmList)areas[0].Variables["items"].Value!;
+        Check(firstList.Values[1].Value is DmList, "Nested list default missing.");
+        var otherList = (DmList)areas[4].Variables["items"].Value!;
+        Check(!ReferenceEquals(firstList, otherList) && !ReferenceEquals(firstList.Values[1].Value, otherList.Values[1].Value), "Inherited nested lists shared across distinct area types.");
+        runtime.Boot();
+        runtime.InvokeGlobal("check_area_lists");
+        Check(otherList.Values[0].Number == 1, "Inherited list mutation leaked into another instance.");
+        var logs = runtime.Logs.Select(l => l.Text).ToArray();
+        Check(logs.SequenceEqual(new[] { "initial=1,3,1,7", "isolated=9,3", "new=1,1,1,1" }), "Area initialization result changed.");
+        if (reference is not null) Check(logs.SequenceEqual(reference), "Optimized/unoptimized area initialization differs.");
+        reference = logs;
+    }
+}));
+foreach (var unsafeType in new[] { "/area/unsafe_helper", "/area/unsafe_sleep", "/area/unsafe_native", "/area/unsafe_read", "/area/unsafe_new", "/area/local/unsafe_child" })
+    tests.Add(($"area initializer rejects unsupported effects: {unsafeType}", () => {
+        foreach (var artifact in new[] { areaInitPath, areaInitOptimizedPath }) {
+            var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+            foreach (var definition in json["Maps"]![0]!["CellDefinitions"]!.AsObject())
+                definition.Value!["Area"]!["Type"] = TypeId(json, unsafeType);
+            try {
+                _ = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+                throw new Exception("Unsupported area initializer was accepted.");
+            } catch (CompatibilityException ex) {
+                Check(ex.Message.Contains("Area initializer") && ex.Message.Contains("area-init.dm:"), "Missing source-located area initializer diagnostic: " + ex.Message);
+            }
+        }
+    }));
 
 var failed = 0;
 foreach (var (name, run) in tests) {

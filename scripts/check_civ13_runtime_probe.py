@@ -15,7 +15,7 @@ PROBE_DLL = ROOT / "tools" / "DmGodot.CompatibilityProbe" / "bin" / "Release" / 
 TIMEOUT_SECONDS = 60
 
 
-def capture_probe(command: list[str], timeout: float = TIMEOUT_SECONDS) -> dict:
+def capture_probe(command: list[str], timeout: float = TIMEOUT_SECONDS, expected_digest: str | None = None) -> dict:
     try:
         result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
@@ -38,6 +38,10 @@ def capture_probe(command: list[str], timeout: float = TIMEOUT_SECONDS) -> dict:
     except (ValueError, TypeError) as error:
         return {"measurement_status": "error", "reason": str(error), "runtime_status": "unknown",
                 "probe_exit_code": result.returncode, "stdout_tail": result.stdout[-4000:], "stderr_tail": result.stderr[-4000:]}
+    if expected_digest is not None and report.get("artifact_sha256") != expected_digest:
+        return {"measurement_status": "error", "runtime_status": "unknown", "reason": "artifact_hash_mismatch",
+                "expected_artifact_sha256": expected_digest, "observed_artifact_sha256": report.get("artifact_sha256"),
+                "probe_exit_code": result.returncode}
     report["measurement_status"] = "completed"
     report["probe_exit_code"] = result.returncode
     return report
@@ -57,7 +61,7 @@ def main() -> int:
             raise ValueError("Expected a successful clean pinned Civ13 compilation.")
         if digest != provenance.get("artifact_sha256"):
             raise ValueError("Artifact differs from compilation provenance.")
-        report = capture_probe([find_dotnet(), str(PROBE_DLL), str(artifact)])
+        report = capture_probe([find_dotnet(), str(PROBE_DLL), str(artifact)], expected_digest=digest)
         report.update({
             "engine_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
             "target_revision": target["revision"], "artifact_sha256": digest,

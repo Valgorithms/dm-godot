@@ -18,11 +18,11 @@ class ProbeTests(unittest.TestCase):
         cls.dotnet = find_dotnet()
         cls.smoke = json.loads((ROOT / "build" / "probe-smoke.json").read_text())
 
-    def run_artifact(self, artifact):
+    def run_artifact(self, artifact, expected_digest=None):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "probe.json"
             path.write_text(json.dumps(artifact))
-            return capture_probe([self.dotnet, str(PROBE_DLL), str(path)], timeout=15)
+            return capture_probe([self.dotnet, str(PROBE_DLL), str(path)], timeout=15, expected_digest=expected_digest)
 
     def clone_smoke(self):
         return json.loads(json.dumps(self.smoke))
@@ -66,6 +66,12 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual((report["measurement_status"], report["runtime_status"], report["phase"]),
                          ("completed", "boot_returned", "boot"))
         self.assertGreater(report["pending_threads"], 0)
+
+    def test_child_hash_must_match_compilation_provenance(self):
+        report = self.run_artifact(self.smoke, expected_digest="0" * 64)
+        self.assertEqual((report["measurement_status"], report["reason"]), ("error", "artifact_hash_mismatch"))
+        self.assertEqual(report["expected_artifact_sha256"], "0" * 64)
+        self.assertNotEqual(report["observed_artifact_sha256"], report["expected_artifact_sha256"])
 
     def test_unexpected_io_failure_is_ci_failure(self):
         report = capture_probe([self.dotnet, str(PROBE_DLL), "/nonexistent/probe-artifact.json"], timeout=15)

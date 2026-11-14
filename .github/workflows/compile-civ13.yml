@@ -6,6 +6,9 @@ on:
     paths:
       - '.github/workflows/compile-civ13.yml'
       - 'scripts/check_civ13_compile.py'
+      - 'scripts/check_civ13_runtime_probe.py'
+      - 'tools/DmGodot.CompatibilityProbe/**'
+      - 'src/DmGodot.Runtime/**'
       - 'scripts/compile.py'
       - 'scripts/bootstrap_opendream.py'
       - 'compatibility/targets.json'
@@ -13,6 +16,9 @@ on:
     paths:
       - '.github/workflows/compile-civ13.yml'
       - 'scripts/check_civ13_compile.py'
+      - 'scripts/check_civ13_runtime_probe.py'
+      - 'tools/DmGodot.CompatibilityProbe/**'
+      - 'src/DmGodot.Runtime/**'
       - 'scripts/compile.py'
       - 'scripts/bootstrap_opendream.py'
       - 'compatibility/targets.json'
@@ -43,8 +49,18 @@ jobs:
           persist-credentials: false
       - name: Build pinned unmodified OpenDream compiler
         run: python scripts/bootstrap_opendream.py
+      - name: Build the standalone runtime probe
+        run: dotnet build tools/DmGodot.CompatibilityProbe/DmGodot.CompatibilityProbe.csproj -c Release --nologo -m:1 -p:UseSharedCompilation=false
+      - name: Compile probe fixture and verify real-process phase handling
+        run: |
+          python scripts/compile.py fixtures/smoke/smoke.dme --output build/probe-smoke.json
+          python -m unittest discover -s tools/DmGodot.CompatibilityProbe/tests -p 'test_*.py' -v
       - name: Compile unchanged Civ13 and check source cleanliness
         run: python scripts/check_civ13_compile.py vendor/Civ13
+      - name: Measure first runtime compatibility boundary without hosting
+        env:
+          DOTNET_GCHeapHardLimit: '0x40000000'
+        run: python scripts/check_civ13_runtime_probe.py
       - name: Preserve diagnostics and provenance
         if: always()
         uses: actions/upload-artifact@v4
@@ -56,3 +72,4 @@ jobs:
             build/civ13/civ13.compiler.log
             build/civ13/civ13.provenance.json
             build/civ13/reproduction.json
+            build/civ13/runtime-probe.json

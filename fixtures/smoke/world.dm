@@ -87,3 +87,24 @@
 
 /proc/test_map_output(atom/item)
     world << item
+
+/turf
+    var/lookup_visits = 0
+    proc/lookup_visit()
+        lookup_visits += 1
+        return lookup_visits
+
+var/turf/located_turf
+
+/proc/test_locate_coordinates(x, y, z)
+    located_turf = locate(x, y, z)
+
+/proc/test_locate_identity()
+    var/turf/first = locate(2, 3, 1)
+    var/turf/second = locate(2, 3, 1)
+    world << "same=[first == second]"
+    world << "coordinates=[first.x],[first.y],[first.z]"
+    world << "visits=[first.lookup_visit()],[second.lookup_visit()]"
+
+/proc/test_locate_mapped_loc(mob/player/item)
+    world << "located-loc=[locate(3, 3, 1) == item.loc]"

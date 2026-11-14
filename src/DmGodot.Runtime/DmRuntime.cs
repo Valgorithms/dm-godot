@@ -23,6 +23,7 @@ public sealed class DmRuntime {
     private readonly List<WorldTile> _tiles = [];
     private readonly List<MapEntity> _entities = [];
     private readonly List<MapCellObjects> _mapCells = [];
+    private readonly Dictionary<(int X, int Y, int Z), DmObject> _mapTurfs = [];
     private readonly Dictionary<DmObject, MapLocation> _mapLocations = [];
     private readonly HashSet<DmObject> _multiLevelAreas = [];
     private sealed record MapLocation(int X, int Y, int Z, DmObject? Loc);
@@ -224,6 +225,7 @@ public sealed class DmRuntime {
                     if (cells.ContainsKey((x, y, block.Z))) throw new CompatibilityException("Overlapping map blocks are not implemented.");
                     cells[(x, y, block.Z)] = new(x, y, block.Z, turf.Variables.GetValueOrDefault("density").IsTruthy, turf.TypePath, turf.Variables.GetValueOrDefault("color").Value as string);
                     _mapLocations.Add(turf, new(x, y, block.Z, area));
+                    _mapTurfs.Add((x, y, block.Z), turf);
                     var entities = new List<DmObject>();
                     foreach (var entity in cell.Objects) {
                         RequireMapType(entity.Type, "/atom/movable", "entity");
@@ -384,6 +386,11 @@ public sealed class DmRuntime {
                         PushFrame(fiber, new Frame(proc, instance, args) { Usr = frame.Usr });
                         break;
                     }
+                    case DreamProcOpcode.LocateCoord: {
+                        var z = frame.Pop(); var y = frame.Pop(); var x = frame.Pop();
+                        frame.Push(LocateCoordinates(x, y, z));
+                        break;
+                    }
                     case DreamProcOpcode.CreateObjectDirect: {
                         var typeId = frame.Reader.Int();
                         BeginConstruction(fiber, frame, typeId, Arguments(frame));
@@ -478,6 +485,20 @@ public sealed class DmRuntime {
             } catch (CompatibilityException ex) { throw Fault(frame, offset, ex.Message, ex); }
             catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentOutOfRangeException or InvalidOperationException or KeyNotFoundException) { throw Fault(frame, offset, $"Malformed or unsupported execution: {ex.Message}", ex); }
         }
+    }
+
+    private DmValue LocateCoordinates(DmValue x, DmValue y, DmValue z) {
+        // The pinned handler coerces non-numbers to zero, then truncates each float.
+        // Check finite/range before casting so host float-to-int overflow is irrelevant.
+        static int Coordinate(DmValue value, int limit) {
+            var number = value.Value is float n ? n : 0;
+            var truncated = Math.Truncate((double)number);
+            if (!double.IsFinite(truncated) || truncated < int.MinValue || truncated > int.MaxValue)
+                throw new CompatibilityException("Locate coordinates outside the finite signed 32-bit integer range are not implemented.");
+            return truncated >= 1 && truncated <= limit ? (int)truncated : 0;
+        }
+        var position = (Coordinate(x, Width), Coordinate(y, Height), Coordinate(z, Levels));
+        return _mapTurfs.TryGetValue(position, out var turf) ? new(turf) : DmValue.Null;
     }
 
     private static DmValue Add(DmValue left, DmValue right) {

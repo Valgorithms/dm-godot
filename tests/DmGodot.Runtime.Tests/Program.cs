@@ -360,6 +360,84 @@ tests.Add(("multi-level area identity survives while coordinates fail explicitly
     Throws(() => runtime.InvokeGlobal("test_map_coordinates", new DmValue(cell.Area)), "Coordinates for multi-level map areas");
 }));
 
+
+tests.Add(("DM coordinate lookup retains turf identity and method state", () => {
+    var runtime = new DmRuntime(CompiledProject.Load(path));
+    runtime.Boot(); runtime.AdvanceBy(2);
+    var start = runtime.Logs.Count;
+    runtime.InvokeGlobal("test_locate_identity");
+    Check(runtime.Logs.Skip(start).Select(l => l.Text).SequenceEqual(new[] {
+        "same=1", "coordinates=2,3,1", "visits=1,2"
+    }), "Located turf identity, coordinates or instance method state mismatch.");
+    var expected = runtime.MapCells.Single(c => c.X == 2 && c.Y == 3 && c.Z == 1).Turf;
+    Check(expected.Variables["lookup_visits"].Number == 2, "Located object was recreated instead of retained.");
+    var mob = runtime.MapCells.Single(c => c.X == 3 && c.Y == 3 && c.Z == 1).Entities.Single();
+    runtime.InvokeGlobal("test_locate_mapped_loc", new DmValue(mob));
+    Check(runtime.Logs[^1].Text == "located-loc=1", "Locate result differs from mapped movable loc.");
+}));
+tests.Add(("coordinate lookup truncates fractions and rejects out-of-bounds coordinates", () => {
+    var runtime = new DmRuntime(CompiledProject.Load(path));
+    runtime.Boot(); runtime.AdvanceBy(2);
+    void Locate(DmValue x, DmValue y, DmValue z, DmObject? expected) {
+        runtime.InvokeGlobal("test_locate_coordinates", x, y, z);
+        Check(ReferenceEquals(runtime.GetGlobal("located_turf").Value, expected), "Coordinate lookup result mismatch.");
+    }
+    var origin = runtime.MapCells.Single(c => c.X == 1 && c.Y == 1).Turf;
+    var corner = runtime.MapCells.Single(c => c.X == 5 && c.Y == 5).Turf;
+    var asymmetric = runtime.MapCells.Single(c => c.X == 2 && c.Y == 3).Turf;
+    Locate(1, 1, 1, origin);
+    Locate(5, 5, 1, corner);
+    Locate(2.9f, 3.9f, 1.9f, asymmetric);
+    Locate(5.9f, 5.9f, 1.9f, corner);
+    foreach (var coordinates in new (float X, float Y, float Z)[] {
+        (0, 1, 1), (1, 0, 1), (1, 1, 0), (-1, 1, 1), (1, -1, 1), (1, 1, -1),
+        (6, 1, 1), (1, 6, 1), (1, 1, 2), (0.9f, 1, 1), (1, -0.9f, 1), (1, 1, 0.9f),
+        (int.MinValue, 1, 1), (2147483520f, 1, 1)
+    }) Locate(coordinates.X, coordinates.Y, coordinates.Z, null);
+    Locate("1", 1, 1, null);
+    Locate(1, DmValue.Null, 1, null);
+    Locate(1, 1, new DmValue(origin), null);
+    Locate(new DmValue(new DmTypeReference(origin.TypeId, origin.TypePath)), 1, 1, null);
+}));
+tests.Add(("coordinate lookup distinguishes z levels and returns null without a map", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    var map = json["Maps"]![0]!;
+    map["MaxZ"] = 2;
+    var secondLevel = map["Blocks"]![0]!.DeepClone();
+    secondLevel["Z"] = 2;
+    map["Blocks"]!.AsArray().Add(secondLevel);
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    runtime.Boot(); runtime.AdvanceBy(2);
+    runtime.InvokeGlobal("test_locate_coordinates", 2, 3, 2);
+    var expected = runtime.MapCells.Single(c => c.X == 2 && c.Y == 3 && c.Z == 2).Turf;
+    Check(ReferenceEquals(runtime.GetGlobal("located_turf").Value, expected), "Z coordinate was ignored.");
+    Check(!ReferenceEquals(expected, runtime.MapCells.Single(c => c.X == 2 && c.Y == 3 && c.Z == 1).Turf), "Levels share a turf.");
+    runtime.InvokeGlobal("test_locate_coordinates", 2, 3, 3);
+    Check(runtime.GetGlobal("located_turf").IsNull, "Above-world z must return null.");
+    json["Maps"] = new JsonArray();
+    var empty = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    empty.Boot(); empty.AdvanceBy(2);
+    empty.InvokeGlobal("test_locate_coordinates", 1, 1, 1);
+    Check(empty.GetGlobal("located_turf").IsNull, "Empty map must return null.");
+}));
+
+tests.Add(("unsupported coordinate casts produce source diagnostics", () => {
+    foreach (var coordinates in new (float X, float Y, float Z)[] {
+        (float.MaxValue, 1, 1), (1, float.MinValue, 1), (1, 1, float.PositiveInfinity),
+        (float.NaN, 1, 1), (1, float.NegativeInfinity, 1), (2147483648f, 1, 1)
+    }) {
+        var runtime = new DmRuntime(CompiledProject.Load(path));
+        runtime.Boot(); runtime.AdvanceBy(2);
+        try {
+            runtime.InvokeGlobal("test_locate_coordinates", coordinates.X, coordinates.Y, coordinates.Z);
+            throw new Exception("Expected unsupported coordinate cast.");
+        } catch (CompatibilityException ex) {
+            Check(ex.Message.Contains("finite signed 32-bit integer range"), "Missing coordinate range diagnostic.");
+            Check(ex.Message.Contains("world.dm:"), "Missing DM source location.");
+        }
+    }
+}));
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

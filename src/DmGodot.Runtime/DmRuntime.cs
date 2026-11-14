@@ -492,8 +492,9 @@ public sealed class DmRuntime {
         // Check finite/range before casting so host float-to-int overflow is irrelevant.
         static int Coordinate(DmValue value, int limit) {
             var number = value.Value is float n ? n : 0;
-            if (!float.IsFinite(number)) return 0;
             var truncated = Math.Truncate((double)number);
+            if (!double.IsFinite(truncated) || truncated < int.MinValue || truncated > int.MaxValue)
+                throw new CompatibilityException("Locate coordinates outside the finite signed 32-bit integer range are not implemented.");
             return truncated >= 1 && truncated <= limit ? (int)truncated : 0;
         }
         var position = (Coordinate(x, Width), Coordinate(y, Height), Coordinate(z, Levels));

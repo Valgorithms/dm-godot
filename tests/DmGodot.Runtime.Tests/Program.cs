@@ -392,7 +392,7 @@ tests.Add(("coordinate lookup truncates fractions and rejects out-of-bounds coor
     foreach (var coordinates in new (float X, float Y, float Z)[] {
         (0, 1, 1), (1, 0, 1), (1, 1, 0), (-1, 1, 1), (1, -1, 1), (1, 1, -1),
         (6, 1, 1), (1, 6, 1), (1, 1, 2), (0.9f, 1, 1), (1, -0.9f, 1), (1, 1, 0.9f),
-        (float.MaxValue, 1, 1), (1, float.MinValue, 1), (1, 1, float.PositiveInfinity), (float.NaN, 1, 1)
+        (int.MinValue, 1, 1), (2147483520f, 1, 1)
     }) Locate(coordinates.X, coordinates.Y, coordinates.Z, null);
     Locate("1", 1, 1, null);
     Locate(1, DmValue.Null, 1, null);
@@ -419,6 +419,23 @@ tests.Add(("coordinate lookup distinguishes z levels and returns null without a 
     empty.Boot(); empty.AdvanceBy(2);
     empty.InvokeGlobal("test_locate_coordinates", 1, 1, 1);
     Check(empty.GetGlobal("located_turf").IsNull, "Empty map must return null.");
+}));
+
+tests.Add(("unsupported coordinate casts produce source diagnostics", () => {
+    foreach (var coordinates in new (float X, float Y, float Z)[] {
+        (float.MaxValue, 1, 1), (1, float.MinValue, 1), (1, 1, float.PositiveInfinity),
+        (float.NaN, 1, 1), (1, float.NegativeInfinity, 1), (2147483648f, 1, 1)
+    }) {
+        var runtime = new DmRuntime(CompiledProject.Load(path));
+        runtime.Boot(); runtime.AdvanceBy(2);
+        try {
+            runtime.InvokeGlobal("test_locate_coordinates", coordinates.X, coordinates.Y, coordinates.Z);
+            throw new Exception("Expected unsupported coordinate cast.");
+        } catch (CompatibilityException ex) {
+            Check(ex.Message.Contains("finite signed 32-bit integer range"), "Missing coordinate range diagnostic.");
+            Check(ex.Message.Contains("world.dm:"), "Missing DM source location.");
+        }
+    }
 }));
 
 var failed = 0;

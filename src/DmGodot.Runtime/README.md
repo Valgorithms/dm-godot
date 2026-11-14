@@ -16,7 +16,8 @@ revision and opcode hash are checked separately by the build tooling and loader.
 - Implements coordinate `locate(x, y, z)` using the retained turf index. Repeated
   lookups return the same object. Finite numbers truncate toward zero before bounds
   checking; non-numbers coerce to zero, and invalid/out-of-bounds coordinates return
-  null. Non-finite numeric inputs return null rather than relying on host casts.
+  null. Non-finite numbers and truncated values outside the signed 32-bit integer
+  range raise source-located compatibility errors; host overflow casts are unsupported.
   Type/tag/container `locate()` and native contents views remain unsupported.
 - Executes `world.New()` and global/instance procedure calls using explicit call
   frames. Numeric values use `float`, matching the currently targeted DM model.

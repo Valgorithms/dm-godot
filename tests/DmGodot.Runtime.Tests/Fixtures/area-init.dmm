@@ -1,0 +1,9 @@
+"a" = (/turf,/area/local/inherited)
+"b" = (/turf,/area/local/replaced)
+"c" = (/turf,/area/local/nulled)
+"d" = (/turf,/area/local/constant)
+"e" = (/turf,/area/local/inherited2)
+
+(1,1,1) = {"
+aabcde
+"}

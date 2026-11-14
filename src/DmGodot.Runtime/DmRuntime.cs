@@ -81,6 +81,9 @@ public sealed class DmRuntime {
             _globals[id] = ConvertValue(value);
         }
         World = CreateInstance(FindType("/world"));
+        // Constructor-time initialization has one fixed aggregate budget; the init-only
+        // InstructionBudget setting applies to later Boot/InvokeGlobal/AdvanceBy calls.
+        _budget = 100_000;
         LoadMaps();
         World.Variables["maxx"] = Width;
         World.Variables["maxy"] = Height;
@@ -213,7 +216,7 @@ public sealed class DmRuntime {
             var defaultAreaId = World.Variables.GetValueOrDefault("area").Value is DmTypeReference defaultAreaType
                 ? defaultAreaType.Id : throw new CompatibilityException("world.area must contain a type reference for default map filling.");
             RequireMapType(defaultAreaId, "/area", "area");
-            _defaultArea = CreateInstance(defaultAreaId);
+            _defaultArea = CreateMapArea(defaultAreaId);
             areas.Add(defaultAreaId, _defaultArea);
         }
         foreach (var map in Data.Maps ?? []) {
@@ -238,7 +241,7 @@ public sealed class DmRuntime {
                         ? defaultArea.Id : throw new CompatibilityException("world.area must contain a type reference for default map filling."));
                     RequireMapType(areaId, "/area", "area");
                     if (!areas.TryGetValue(areaId, out var area)) {
-                        area = CreateInstance(areaId);
+                        area = CreateMapArea(areaId);
                         areas.Add(areaId, area);
                     }
                     foreach (var (name, value) in cell.Turf?.VarOverrides ?? []) {
@@ -289,6 +292,70 @@ public sealed class DmRuntime {
     private void RequireMapType(int typeId, string ancestorPath, string role) {
         if (!IsSubtypeOf(typeId, ancestorPath))
             throw new CompatibilityException($"Map {role} must be a subtype of {ancestorPath}.");
+    }
+
+    // Area initialization is currently limited to local literal/list defaults. Validate
+    // the complete super chain before executing anything: no observable preboot effects.
+    private DmObject CreateMapArea(int typeId) {
+        var area = CreateInstance(typeId, initializeLater: true);
+        var initializer = ResolveInitializer(typeId);
+        if (initializer is null) return area;
+        ValidateAreaInitializer(area, initializer, new HashSet<Procedure>());
+        Execute(new Fiber(new Frame(initializer, area, [])));
+        return area;
+    }
+
+    private void ValidateAreaInitializer(DmObject area, Procedure proc, HashSet<Procedure> visited) {
+        if (!visited.Add(proc)) throw new CompatibilityException($"Area initializer repeats a super initializer at {Project.Location(proc, 0)}.");
+        var frame = new Frame(proc, area, []);
+        var reader = frame.Reader;
+        if (visited.Count > 256) throw Fault(frame, 0, "Area initializer inheritance limit exceeded.");
+        if (Data.Types[proc.OwningTypeId].InitProc is not int ownInit || !ReferenceEquals(Data.Procs[ownInit], proc))
+            throw Fault(frame, 0, "Area initializer must be a compiler type initializer.");
+        void Assignment(Reference reference, int offset) {
+            if (reference.Kind != 13) throw Fault(frame, offset, "Area initializer may assign only its own user variables.");
+            var name = Project.String(reference.Value);
+            if (!area.Variables.ContainsKey(name) || ProtectedMapField(area, name) || name is "type" or "parent_type" or "vars" or "tag")
+                throw Fault(frame, offset, $"Area initializer native/metadata assignment '{name}' is not implemented.");
+        }
+        while (reader.Position < reader.Length) {
+            var offset = reader.Position;
+            var opcode = (DreamProcOpcode)reader.Byte();
+            switch (opcode) {
+                case DreamProcOpcode.PushNull: case DreamProcOpcode.Pop: case DreamProcOpcode.Return: break;
+                case DreamProcOpcode.PushFloat: case DreamProcOpcode.ReturnFloat: reader.Float(); break;
+                case DreamProcOpcode.PushString: case DreamProcOpcode.PushResource: Project.String(reader.Int()); break;
+                case DreamProcOpcode.PushType:
+                    var id = reader.Int();
+                    if (id < 0 || id >= Data.Types.Length) throw Fault(frame, offset, "Area initializer has an invalid type literal.");
+                    break;
+                case DreamProcOpcode.Assign: case DreamProcOpcode.AssignNoPush: Assignment(reader.Reference(), offset); break;
+                case DreamProcOpcode.ReturnReferenceValue:
+                    if (reader.Reference().Kind != 2) throw Fault(frame, offset, "Area initializer reference reads are not implemented.");
+                    break;
+                case DreamProcOpcode.CreateList:
+                    if (reader.Int() < 0) throw Fault(frame, offset, "Area initializer has an invalid list length.");
+                    break;
+                case DreamProcOpcode.CreateListNFloats: case DreamProcOpcode.CreateListNStrings: case DreamProcOpcode.CreateListNResources:
+                    var count = reader.Int();
+                    if (count < 0 || count > (reader.Length - reader.Position) / 4)
+                        throw Fault(frame, offset, "Area initializer has an invalid literal list length.");
+                    for (var i = 0; i < count; i++) {
+                        if (opcode == DreamProcOpcode.CreateListNFloats) reader.Float();
+                        else Project.String(reader.Int());
+                    }
+                    break;
+                case DreamProcOpcode.Call:
+                    var reference = reader.Reference();
+                    var kind = reader.Byte(); var argc = reader.Int();
+                    if (reference.Kind != 6 || kind is not (0 or 4) || argc != 0)
+                        throw Fault(frame, offset, "Area initializer calls other than argument-free super initialization are not implemented.");
+                    if (SuperProc(proc) is { } parent) ValidateAreaInitializer(area, parent, visited);
+                    break;
+                default:
+                    throw Fault(frame, offset, $"Area initializer opcode {opcode} is not implemented; only local literal/list defaults are supported.");
+            }
+        }
     }
 
     private bool IsOrdinaryDatumType(int typeId) {

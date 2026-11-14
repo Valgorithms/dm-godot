@@ -290,18 +290,13 @@ public sealed class DmRuntime {
                 throw new CompatibilityException($"Map turf override '{name}' is not implemented.");
             turf.Variables[name] = ConvertValue(value);
         }
-        _ = TurfLayer(turf); // Validate the final effective value, after per-cell overrides.
         return turf;
     }
 
     private static DmValue TurfLayer(DmObject turf) {
-        // Pinned appearance storage preserves floats, and nonnumbers coerce to zero.
-        // Our static subset deliberately rejects nonfinite values instead of claiming
-        // their downstream appearance/rendering semantics.
-        var layer = turf.Variables.GetValueOrDefault("layer").Value is float number ? number : 0f;
-        if (!float.IsFinite(layer))
-            throw new CompatibilityException("Non-finite turf layer values are not implemented.");
-        return layer;
+        // Pinned native storage preserves every float (including infinities), and
+        // nonnumbers coerce to zero. No rendering operation or integer cast occurs.
+        return turf.Variables.GetValueOrDefault("layer").Value is float number ? number : 0f;
     }
 
     private bool IsSubtypeOf(int typeId, string ancestorPath) {

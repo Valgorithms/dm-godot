@@ -22,12 +22,12 @@ revision and opcode hash are checked separately by the build tooling and loader.
   intact. Name writes and object stringification remain unsupported. Unknown override
   fields fail explicitly (upstream ignores them); metadata/tag/native fields other than
   the existing density/color diagnostic inputs, name and layer remain rejected.
-- Static turf `layer` overrides and reads preserve finite float32 values, including
-  fractions, negative values and FLOAT_LAYER (-1), with no clamp or remapping.
+- Static turf `layer` overrides and reads preserve float32 values, including
+  fractions, negative values, FLOAT_LAYER (-1), and tagged positive/negative infinities,
+  with no clamp or remapping.
   Supported nonnumeric compiler values normalize to zero while raw values remain intact.
-  The final effective value is checked after overrides; nonfinite numeric layers fail
-  explicitly. This finite-only boundary is stricter than the pinned native setter,
-  which also stores nonfinite floats. Turf layer writes, movable/area layer reads,
+  Reads use the final effective value after per-cell overrides. Turf layer writes,
+  movable/area layer reads,
   rendering order, plane interactions and appearance propagation remain unsupported.
 - Implements coordinate `locate(x, y, z)` using the retained turf index. Repeated
   lookups return the same object. Finite numbers truncate toward zero before bounds

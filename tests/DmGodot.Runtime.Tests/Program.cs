@@ -610,19 +610,22 @@ tests.Add(("static turf layer preserves finite values and normalizes nonnumbers 
         Check(candidate.MapCells[4].Turf.Variables["layer_seen"].Number == 2.5f, "Per-cell override mutated inherited layer defaults.");
     }
 }));
-tests.Add(("static turf layer rejects nonfinite effective values without clamping", () => {
+tests.Add(("static turf layer preserves tagged infinities and final override precedence", () => {
     foreach (var kind in new[] { 4, 5 }) {
         var json = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
         json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"]!["layer"] = new JsonObject { ["type"] = kind };
-        Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Non-finite turf layer");
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        var expected = kind == 4 ? float.PositiveInfinity : float.NegativeInfinity;
+        Check(runtime.MapCells[0].Turf.Variables["layer_seen"].Number == expected, "Tagged infinity layer was changed.");
     }
     var inherited = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
     inherited["Types"]![TypeId(inherited, "/turf/base")]!["Variables"]!["layer"] = new JsonObject { ["type"] = 4 };
-    Throws(() => new DmRuntime(CompiledProject.Parse(inherited.ToJsonString())), "Non-finite turf layer");
+    var original = new DmRuntime(CompiledProject.Parse(inherited.ToJsonString())); original.Boot();
+    Check(float.IsPositiveInfinity(original.MapCells[4].Turf.Variables["layer_seen"].Number), "Inherited infinity layer was changed.");
     inherited["Maps"]![0]!["CellDefinitions"]!["d"]!["Turf"]!["VarOverrides"] = new JsonObject { ["layer"] = 3.5f };
     var overridden = new DmRuntime(CompiledProject.Parse(inherited.ToJsonString())); overridden.Boot();
     Check(overridden.MapCells[4].Turf.Variables["layer_seen"].Number == 3.5f,
-        "A valid map override must replace an inherited nonfinite layer before native validation.");
+        "Map overrides must replace inherited values before New observes native layer.");
 }));
 foreach (var (proc, error) in new[] {
     ("test_turf_layer_write", "Mutation of map atom.layer"),

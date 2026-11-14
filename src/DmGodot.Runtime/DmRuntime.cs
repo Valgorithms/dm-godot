@@ -16,11 +16,38 @@ public sealed class DmRuntime {
     public int Levels { get; private set; }
     public IReadOnlyList<WorldTile> Tiles => _tiles;
     public IReadOnlyList<MapEntity> MapEntities => _entities;
+    public IReadOnlyList<MapCellObjects> MapCells => _mapCells.AsReadOnly();
     public IReadOnlyList<RuntimeLog> Logs => _logs;
     public int PendingThreads => _queue.Count;
     public DmObject World { get; }
     private readonly List<WorldTile> _tiles = [];
     private readonly List<MapEntity> _entities = [];
+    private readonly List<MapCellObjects> _mapCells = [];
+    private readonly Dictionary<DmObject, MapLocation> _mapLocations = [];
+    private readonly HashSet<DmObject> _multiLevelAreas = [];
+    private sealed record MapLocation(int X, int Y, int Z, DmObject? Loc);
+    // Native fields require appearance, containment or connection adapters, not raw compiler defaults.
+    // Names are pinned to DMStandard/Types/Atoms at the supported compiler revision.
+    private static readonly HashSet<string> UnsupportedAtomFields = new(StringComparer.Ordinal) {
+        "name", "text", "desc", "suffix", "verbs", "contents", "overlays", "underlays", "vis_locs", "vis_contents",
+        "dir", "pixel_x", "pixel_y", "pixel_z", "pixel_w", "icon_w", "icon_z", "icon", "icon_state", "layer", "plane",
+        "alpha", "color", "invisibility", "mouse_opacity", "infra_luminosity", "luminosity", "opacity", "transform",
+        "blend_mode", "gender", "density", "maptext", "filters", "appearance", "appearance_flags",
+        "maptext_width", "maptext_height", "maptext_x", "maptext_y", "step_x", "step_y", "render_source",
+        "mouse_drag_pointer", "mouse_drop_pointer", "mouse_over_pointer", "mouse_drop_zone", "render_target", "vis_flags", "pixloc"
+    };
+    private static readonly HashSet<string> UnsupportedMovableFields = new(StringComparer.Ordinal) {
+        "screen_loc", "animate_movement", "locs", "glide_size", "step_size", "bound_x", "bound_y", "bound_width", "bound_height", "bounds", "particles"
+    };
+    private static readonly HashSet<string> UnsupportedMobFields = new(StringComparer.Ordinal) {
+        "client", "key", "ckey", "group", "see_invisible", "see_infrared", "sight", "see_in_dark"
+    };
+    private bool UnsupportedMapField(DmObject obj, string name) =>
+        UnsupportedAtomFields.Contains(name) ||
+        (IsSubtypeOf(obj.TypeId, "/atom/movable") && UnsupportedMovableFields.Contains(name)) ||
+        (IsSubtypeOf(obj.TypeId, "/mob") && UnsupportedMobFields.Contains(name));
+    private bool ProtectedMapField(DmObject obj, string name) => UnsupportedMapField(obj, name) ||
+        name is "loc" or "x" or "y" or "z";
     private readonly List<RuntimeLog> _logs = [];
     private readonly PriorityQueue<Fiber, (double Time, long Sequence)> _queue = new();
     private readonly DmValue[] _globals;
@@ -164,6 +191,7 @@ public sealed class DmRuntime {
 
     private void LoadMaps() {
         var cells = new Dictionary<(int, int, int), WorldTile>();
+        var areas = new Dictionary<int, DmObject>();
         foreach (var map in Data.Maps ?? []) {
             Width = Math.Max(Width, map.MaxX); Height = Math.Max(Height, map.MaxY); Levels = Math.Max(Levels, map.MaxZ);
             foreach (var block in map.Blocks) {
@@ -177,26 +205,61 @@ public sealed class DmRuntime {
                     if (!map.CellDefinitions.TryGetValue(block.Cells[i], out var cell)) throw new CompatibilityException("Missing map cell definition.");
                     var turfId = cell.Turf?.Type ?? (World.Variables.GetValueOrDefault("turf").Value is DmTypeReference defaultTurf
                         ? defaultTurf.Id : throw new CompatibilityException("world.turf must contain a type reference for default map filling."));
+                    RequireMapType(turfId, "/turf", "turf");
                     var turf = CreateStaticMapInstance(turfId);
-                    if (cell.Area is not null) {
-                        if (cell.Area.VarOverrides is { Count: > 0 }) throw new CompatibilityException("Map area variable overrides are not implemented.");
-                        CreateStaticMapInstance(cell.Area.Type);
+                    if (cell.Area?.VarOverrides is not null)
+                        throw new CompatibilityException("Map area variable overrides are not implemented.");
+                    var areaId = cell.Area?.Type ?? (World.Variables.GetValueOrDefault("area").Value is DmTypeReference defaultArea
+                        ? defaultArea.Id : throw new CompatibilityException("world.area must contain a type reference for default map filling."));
+                    RequireMapType(areaId, "/area", "area");
+                    if (!areas.TryGetValue(areaId, out var area)) {
+                        area = CreateStaticMapInstance(areaId);
+                        areas.Add(areaId, area);
                     }
-                    foreach (var (name, value) in cell.Turf?.VarOverrides ?? []) turf.Variables[name] = ConvertValue(value);
+                    foreach (var (name, value) in cell.Turf?.VarOverrides ?? []) {
+                        if ((ProtectedMapField(turf, name) && name is not ("density" or "color")) || name is "type" or "parent_type" or "vars")
+                            throw new CompatibilityException($"Map turf override '{name}' is not implemented.");
+                        turf.Variables[name] = ConvertValue(value);
+                    }
                     if (cells.ContainsKey((x, y, block.Z))) throw new CompatibilityException("Overlapping map blocks are not implemented.");
                     cells[(x, y, block.Z)] = new(x, y, block.Z, turf.Variables.GetValueOrDefault("density").IsTruthy, turf.TypePath, turf.Variables.GetValueOrDefault("color").Value as string);
+                    _mapLocations.Add(turf, new(x, y, block.Z, area));
+                    var entities = new List<DmObject>();
                     foreach (var entity in cell.Objects) {
-                        CreateStaticMapInstance(entity.Type);
+                        RequireMapType(entity.Type, "/atom/movable", "entity");
                         if (entity.VarOverrides is { Count: > 0 })
                             throw new CompatibilityException("Map entity variable overrides are not implemented.");
-                        _entities.Add(new(x, y, block.Z, Data.Types[entity.Type].Path));
+                        var instance = CreateStaticMapInstance(entity.Type);
+                        _mapLocations.Add(instance, new(x, y, block.Z, turf));
+                        entities.Add(instance);
+                        _entities.Add(new(x, y, block.Z, instance.TypePath));
                     }
+                    _mapCells.Add(new(x, y, block.Z, turf, area, entities.AsReadOnly()));
                 }
             }
         }
         if ((long)Width * Height * Levels != cells.Count)
             throw new CompatibilityException("Sparse map default filling is not implemented.");
         _tiles.AddRange(cells.Values.OrderBy(t => t.Z).ThenBy(t => t.Y).ThenBy(t => t.X));
+        _mapCells.Sort((a, b) => (a.Z, a.Y, a.X).CompareTo((b.Z, b.Y, b.X)));
+        // Single-level area coordinates use lowest y, then x. Multi-level upstream
+        // coordinate caching is not a stable contract here, so reject those reads.
+        foreach (var cell in _mapCells) {
+            if (_mapLocations.TryGetValue(cell.Area, out var first) && first.Z != cell.Z)
+                _multiLevelAreas.Add(cell.Area);
+            _mapLocations.TryAdd(cell.Area, new(cell.X, cell.Y, cell.Z, null));
+        }
+    }
+
+    private bool IsSubtypeOf(int typeId, string ancestorPath) {
+        if (typeId < 0 || typeId >= Data.Types.Length) return false;
+        for (int? current = typeId; current is not null; current = Data.Types[current.Value].Parent)
+            if (Data.Types[current.Value].Path == ancestorPath) return true;
+        return false;
+    }
+    private void RequireMapType(int typeId, string ancestorPath, string role) {
+        if (!IsSubtypeOf(typeId, ancestorPath))
+            throw new CompatibilityException($"Map {role} must be a subtype of {ancestorPath}.");
     }
 
     private DmObject CreateStaticMapInstance(int typeId) {
@@ -436,6 +499,8 @@ public sealed class DmRuntime {
     private static void Compare(Frame f, Func<float, float, bool> op) { var b = f.Pop().Number; f.Push(op(f.Pop().Number, b) ? 1 : 0); }
     private void Output(DmValue recipient, DmValue value) {
         if (!ReferenceEquals(recipient.Value, World)) throw new CompatibilityException("Only world output is implemented.");
+        if (value.Value is DmObject obj && _mapLocations.ContainsKey(obj))
+            throw new CompatibilityException("Map atom stringification is not implemented.");
         _logs.Add(new(Time, value.ToString()));
     }
     private DmValue[] Arguments(Frame frame) {
@@ -455,6 +520,17 @@ public sealed class DmRuntime {
             if (BuiltinWorldFields.Contains(name) && !ReadableWorldFields.Contains(name))
                 throw new CompatibilityException($"world.{name} is not implemented.");
             if (name == "time") return (float)Time;
+        }
+        if (_mapLocations.TryGetValue(obj, out var location)) {
+            if (UnsupportedMapField(obj, name)) throw new CompatibilityException($"Map atom.{name} is not implemented.");
+            if (_multiLevelAreas.Contains(obj) && name is ("x" or "y" or "z"))
+                throw new CompatibilityException("Coordinates for multi-level map areas are not implemented.");
+            switch (name) {
+                case "x": return location.X;
+                case "y": return location.Y;
+                case "z": return location.Z;
+                case "loc": return new(location.Loc);
+            }
         }
         if (name == "vars") throw new CompatibilityException("datum.vars is not implemented.");
         return obj.Variables.TryGetValue(name, out var value) ? value : throw new CompatibilityException($"Unknown field '{name}'.");
@@ -483,6 +559,8 @@ public sealed class DmRuntime {
     }
     private void SetField(DmValue owner, string name, DmValue value) {
         if (owner.Value is not DmObject obj || !obj.Variables.ContainsKey(name)) throw new CompatibilityException($"Cannot assign field '{name}'.");
+        if (_mapLocations.ContainsKey(obj) && ProtectedMapField(obj, name))
+            throw new CompatibilityException($"Mutation of map atom.{name} is not implemented.");
         if (ReferenceEquals(obj, World) && BuiltinWorldFields.Contains(name)) throw new CompatibilityException($"Mutation of world.{name} is not implemented.");
         if (name is "type" or "parent_type" or "vars")
             throw new CompatibilityException($"Mutation of datum.{name} is not implemented.");

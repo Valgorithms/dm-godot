@@ -1,4 +1,5 @@
 using DmGodot.Runtime;
+using DMCompiler.Bytecode;
 using System.Text.Json.Nodes;
 
 var path = args.Length > 0 ? args[0] : "build/smoke.json";
@@ -127,9 +128,10 @@ tests.Add(("map area overrides rejected rather than ignored", () => {
 }));
 
 var semanticsPath = args.Length > 1 ? args[1] : "build/semantics.json";
-void Semantics(string name, string proc, string[] immediate, string[] afterOne) {
+var optimizedPath = args.Length > 2 ? args[2] : "build/semantics-optimized.json";
+void Semantics(string name, string proc, string[] immediate, string[] afterOne, bool optimized = false) {
     tests.Add((name, () => {
-        var runtime = new DmRuntime(CompiledProject.Load(semanticsPath));
+        var runtime = new DmRuntime(CompiledProject.Load(optimized ? optimizedPath : semanticsPath));
         runtime.Boot(); runtime.InvokeGlobal(proc);
         Check(runtime.Logs.Select(x => x.Text).SequenceEqual(immediate), "Immediate logs: " + string.Join(", ", runtime.Logs.Select(x => x.Text)));
         runtime.AdvanceBy(1);
@@ -164,10 +166,24 @@ SemanticFailure("world.contents placeholder is rejected", "test_world_contents",
 SemanticFailure("world.realtime placeholder is rejected", "test_world_realtime", "world.realtime is not implemented");
 
 Semantics("optimized literal lists preserve order and duplicates", "test_literal_lists",
-    ["numbers=3:3,1,3", "strings=3:third,first,third", "resources=2:semantics.dm,semantics.dme"],
-    ["numbers=3:3,1,3", "strings=3:third,first,third", "resources=2:semantics.dm,semantics.dme"]);
+    ["numbers=3:3,1,3", "strings=3:third,first,third", "resources=2:../tests/DmGodot.Runtime.Tests/Fixtures/semantics.dm,../tests/DmGodot.Runtime.Tests/Fixtures/semantics.dme"],
+    ["numbers=3:3,1,3", "strings=3:third,first,third", "resources=2:../tests/DmGodot.Runtime.Tests/Fixtures/semantics.dm,../tests/DmGodot.Runtime.Tests/Fixtures/semantics.dme"], optimized: true);
 Semantics("optimized reference lists preserve shared identity", "test_reference_lists",
-    ["references=2:7,7", "shared=9,9"], ["references=2:7,7", "shared=9,9"]);
+    ["references=2:7,7", "shared=9,9"], ["references=2:7,7", "shared=9,9"], optimized: true);
+
+tests.Add(("pinned optimizer emits all four list constructor instructions", () => {
+    var json = JsonNode.Parse(File.ReadAllText(optimizedPath))!;
+    foreach (var (proc, opcode) in new[] {
+        ("literal_numbers", DreamProcOpcode.CreateListNFloats),
+        ("literal_strings", DreamProcOpcode.CreateListNStrings),
+        ("literal_resources", DreamProcOpcode.CreateListNResources),
+        ("literal_refs", DreamProcOpcode.CreateListNRefs)
+    }) {
+        var definition = json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == proc)!;
+        var code = Convert.FromBase64String(definition["Bytecode"]!.GetValue<string>());
+        Check(code.Length > 0 && code[0] == (byte)opcode, $"Expected {proc} to start with {opcode}.");
+    }
+}));
 
 var failed = 0;
 foreach (var (name, run) in tests) {

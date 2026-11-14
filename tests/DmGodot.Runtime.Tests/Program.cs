@@ -287,7 +287,7 @@ tests.Add(("default area is retained and area coordinates follow lowest turf", (
     var region = runtime.MapCells[0].Area;
     Check(region.TypePath == "/area" && runtime.MapCells.All(c => ReferenceEquals(c.Area, region)), "world.area fallback was not shared.");
     runtime.Boot(); runtime.AdvanceBy(2);
-    runtime.InvokeGlobal("test_map_coordinates", new(region));
+    runtime.InvokeGlobal("test_map_coordinates", new DmValue(region));
     Check(runtime.Logs[^1].Text == "coordinates=1,1,1", "Area coordinates must come from lowest turf.");
 }));
 tests.Add(("different area types retain distinct identities and coordinates", () => {
@@ -297,7 +297,7 @@ tests.Add(("different area types retain distinct identities and coordinates", ()
     var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
     Check(runtime.MapCells.Select(c => c.Area).Distinct().Count() == 2, "Different areas coalesced.");
     var station = runtime.MapCells.First(c => c.Area.TypePath == "/area/station").Area;
-    runtime.Boot(); runtime.AdvanceBy(2); runtime.InvokeGlobal("test_map_coordinates", new(station));
+    runtime.Boot(); runtime.AdvanceBy(2); runtime.InvokeGlobal("test_map_coordinates", new DmValue(station));
     Check(runtime.Logs[^1].Text == "coordinates=2,2,1", "Area coordinate order mismatch.");
 }));
 void MapFailure(string name, Action<JsonNode> mutate, string error) {
@@ -321,7 +321,7 @@ void MapFieldFailure(string proc, string error) {
         var runtime = new DmRuntime(CompiledProject.Load(path));
         runtime.Boot(); runtime.AdvanceBy(2);
         var entity = runtime.MapCells.Single(c => c.X == 3 && c.Y == 3).Entities.Single();
-        Throws(() => runtime.InvokeGlobal(proc, new(entity)), error);
+        Throws(() => runtime.InvokeGlobal(proc, new DmValue(entity)), error);
     }));
 }
 MapFieldFailure("test_map_contents", "Map atom.contents is not implemented");
@@ -335,6 +335,8 @@ MapFieldFailure("test_map_color_read", "Map atom.color is not implemented");
 MapFieldFailure("test_map_bounds_read", "Map atom.bound_width is not implemented");
 MapFieldFailure("test_map_client_read", "Map atom.client is not implemented");
 MapFieldFailure("test_map_sight_write", "Mutation of map atom.sight");
+
+MapFieldFailure("test_map_output", "Map atom stringification is not implemented");
 
 var failed = 0;
 foreach (var (name, run) in tests) {

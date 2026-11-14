@@ -494,6 +494,8 @@ public sealed class DmRuntime {
     private static void Compare(Frame f, Func<float, float, bool> op) { var b = f.Pop().Number; f.Push(op(f.Pop().Number, b) ? 1 : 0); }
     private void Output(DmValue recipient, DmValue value) {
         if (!ReferenceEquals(recipient.Value, World)) throw new CompatibilityException("Only world output is implemented.");
+        if (value.Value is DmObject obj && _mapLocations.ContainsKey(obj))
+            throw new CompatibilityException("Map atom stringification is not implemented.");
         _logs.Add(new(Time, value.ToString()));
     }
     private DmValue[] Arguments(Frame frame) {

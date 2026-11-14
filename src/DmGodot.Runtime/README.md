@@ -53,6 +53,7 @@ Area coordinates use the lowest turf by z, y, then x. Native atom/appearance, mo
 remain explicit errors, including contents, color, bounds and connection/vision fields.
 This avoids exposing unnormalized compiler defaults as runtime behavior. Mutation of
 those fields remains rejected so retained objects cannot silently diverge from snapshots.
+Direct mapped-object output also fails until native name/stringification is implemented.
 Ordinary user-declared variables remain readable and writable.
 Full containment/movement, native managed object creation,
 GC/deletion, associative-list construction, dynamic calls, native interfaces,

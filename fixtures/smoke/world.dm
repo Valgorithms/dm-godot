@@ -84,3 +84,6 @@
 
 /proc/test_map_sight_write(mob/item)
     item.sight = 0
+
+/proc/test_map_output(atom/item)
+    world << item

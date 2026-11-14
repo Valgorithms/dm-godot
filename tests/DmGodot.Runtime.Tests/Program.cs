@@ -594,6 +594,54 @@ tests.Add(("turf overrides do not bypass inherited executable initialization rej
     Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers are not implemented: /turf/initialized_base");
 }));
 
+tests.Add(("static turf layer preserves finite values and normalizes nonnumbers before New", () => {
+    var runtime = new DmRuntime(CompiledProject.Load(turfNamePath)); runtime.Boot();
+    Check(runtime.MapCells.Select(c => c.Turf.Variables["layer_seen"].Number)
+        .SequenceEqual(new float[] { 4.75f, 4.75f, 0, -1, 2.5f, 0, 0, 0 }), "Layer default/override normalization changed.");
+    Check(runtime.MapCells[5].Turf.Variables["layer"].Value is string &&
+          runtime.MapCells[6].Turf.Variables["layer"].Value is DmTypeReference &&
+          runtime.MapCells[7].Turf.Variables["layer"].Value is DmResource, "Raw layer overrides were destroyed.");
+    Check(runtime.MapCells[2].Turf.Variables["layer"].IsNull, "Raw null layer was destroyed.");
+    foreach (var value in new[] { float.MinValue, float.MaxValue, float.Epsilon, -0.25f, 0f, -1f, 123.75f }) {
+        var json = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
+        json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"]!["layer"] = value;
+        var candidate = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); candidate.Boot();
+        Check(candidate.MapCells[0].Turf.Variables["layer_seen"].Number == value, "Finite layer was clamped, rounded or remapped.");
+        Check(candidate.MapCells[4].Turf.Variables["layer_seen"].Number == 2.5f, "Per-cell override mutated inherited layer defaults.");
+    }
+}));
+tests.Add(("static turf layer preserves tagged infinities and final override precedence", () => {
+    foreach (var kind in new[] { 4, 5 }) {
+        var json = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
+        json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"]!["layer"] = new JsonObject { ["type"] = kind };
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        var expected = kind == 4 ? float.PositiveInfinity : float.NegativeInfinity;
+        Check(runtime.MapCells[0].Turf.Variables["layer_seen"].Number == expected, "Tagged infinity layer was changed.");
+    }
+    var inherited = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
+    inherited["Types"]![TypeId(inherited, "/turf/base")]!["Variables"]!["layer"] = new JsonObject { ["type"] = 4 };
+    var original = new DmRuntime(CompiledProject.Parse(inherited.ToJsonString())); original.Boot();
+    Check(float.IsPositiveInfinity(original.MapCells[4].Turf.Variables["layer_seen"].Number), "Inherited infinity layer was changed.");
+    inherited["Maps"]![0]!["CellDefinitions"]!["d"]!["Turf"]!["VarOverrides"] = new JsonObject { ["layer"] = 3.5f };
+    var overridden = new DmRuntime(CompiledProject.Parse(inherited.ToJsonString())); overridden.Boot();
+    Check(overridden.MapCells[4].Turf.Variables["layer_seen"].Number == 3.5f,
+        "Map overrides must replace inherited values before New observes native layer.");
+}));
+foreach (var (proc, error) in new[] {
+    ("test_turf_layer_write", "Mutation of map atom.layer"),
+    ("test_area_layer_read", "Map atom.layer")
+}) tests.Add(($"{proc} remains unsupported", () => {
+    var runtime = new DmRuntime(CompiledProject.Load(turfNamePath)); runtime.Boot();
+    Throws(() => runtime.InvokeGlobal(proc), error);
+}));
+tests.Add(("movable layer reads remain unsupported", () => {
+    var json = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
+    json["Maps"]![0]!["CellDefinitions"]!["a"]!["Objects"] = new JsonArray(new JsonObject { ["Type"] = TypeId(json, "/mob") });
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+    var mob = runtime.MapCells[0].Entities.Single();
+    Throws(() => runtime.InvokeGlobal("test_movable_layer_read", new DmValue(mob)), "Map atom.layer");
+}));
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

@@ -285,12 +285,18 @@ public sealed class DmRuntime {
         foreach (var (name, value) in overrides ?? []) {
             if (!turf.Variables.ContainsKey(name))
                 throw new CompatibilityException($"Map turf override '{name}' names an unknown variable.");
-            if ((ProtectedMapField(turf, name) && name is not ("density" or "color" or "name")) ||
+            if ((ProtectedMapField(turf, name) && name is not ("density" or "color" or "name" or "layer")) ||
                 name is "type" or "parent_type" or "vars" or "tag")
                 throw new CompatibilityException($"Map turf override '{name}' is not implemented.");
             turf.Variables[name] = ConvertValue(value);
         }
         return turf;
+    }
+
+    private static DmValue TurfLayer(DmObject turf) {
+        // Pinned native storage preserves every float (including infinities), and
+        // nonnumbers coerce to zero. No rendering operation or integer cast occurs.
+        return turf.Variables.GetValueOrDefault("layer").Value is float number ? number : 0f;
     }
 
     private bool IsSubtypeOf(int typeId, string ancestorPath) {
@@ -638,8 +644,10 @@ public sealed class DmRuntime {
         if (_mapLocations.TryGetValue(obj, out var location)) {
             // The pinned appearance setter retains strings and normalizes every
             // nonstring name to empty. Keep raw definition values untouched.
-            if (name == "name" && IsSubtypeOf(obj.TypeId, "/turf"))
-                return obj.Variables.GetValueOrDefault("name").Value as string ?? "";
+            if (IsSubtypeOf(obj.TypeId, "/turf")) {
+                if (name == "name") return obj.Variables.GetValueOrDefault("name").Value as string ?? "";
+                if (name == "layer") return TurfLayer(obj);
+            }
             if (UnsupportedMapField(obj, name)) throw new CompatibilityException($"Map atom.{name} is not implemented.");
             if (_multiLevelAreas.Contains(obj) && name is ("x" or "y" or "z"))
                 throw new CompatibilityException("Coordinates for multi-level map areas are not implemented.");

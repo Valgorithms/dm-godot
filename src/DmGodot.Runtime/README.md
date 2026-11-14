@@ -21,7 +21,14 @@ revision and opcode hash are checked separately by the build tooling and loader.
   and normalize nonstrings to empty, matching the pinned native setter. Raw values stay
   intact. Name writes and object stringification remain unsupported. Unknown override
   fields fail explicitly (upstream ignores them); metadata/tag/native fields other than
-  the existing density/color diagnostic inputs and name remain rejected.
+  the existing density/color diagnostic inputs, name and layer remain rejected.
+- Static turf `layer` overrides and reads preserve float32 values, including
+  fractions, negative values, FLOAT_LAYER (-1), and tagged positive/negative infinities,
+  with no clamp or remapping.
+  Supported nonnumeric compiler values normalize to zero while raw values remain intact.
+  Reads use the final effective value after per-cell overrides. Turf layer writes,
+  movable/area layer reads,
+  rendering order, plane interactions and appearance propagation remain unsupported.
 - Implements coordinate `locate(x, y, z)` using the retained turf index. Repeated
   lookups return the same object. Finite numbers truncate toward zero before bounds
   checking; non-numbers coerce to zero, and invalid/out-of-bounds coordinates return
@@ -83,7 +90,7 @@ and receives New even when no cell uses it, provided the map has at least one z 
 Single-z area coordinates use the lowest turf by y, then x; coordinate reads on areas
 spanning multiple z levels fail explicitly because pinned upstream cross-z cache behavior
 needs separate parity investigation. Their identity and null loc remain available. Native atom/appearance, movable and mob fields beyond loc/coordinates/type metadata
-remain explicit errors, except static turf name reads; this includes contents, color,
+remain explicit errors, except static turf name/layer reads; this includes contents, color,
 bounds and connection/vision fields.
 This avoids exposing unnormalized compiler defaults as runtime behavior. Mutation of
 those fields remains rejected so retained objects cannot silently diverge from snapshots.

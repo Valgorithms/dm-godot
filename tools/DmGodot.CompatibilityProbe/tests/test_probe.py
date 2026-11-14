@@ -43,7 +43,8 @@ class ProbeTests(unittest.TestCase):
 
     def world_new(self, artifact):
         world = next(i for i, item in enumerate(artifact["Types"]) if item["Path"] == "/world")
-        return next(proc for proc in artifact["Procs"] if proc["OwningTypeId"] == world and proc["Name"] == "New")
+        return next(artifact["Procs"][proc_id] for chain in artifact["Types"][world]["Procs"]
+                    for proc_id in reversed(chain) if artifact["Procs"][proc_id]["Name"] == "New")
 
     def test_boot_unsupported_opcode_retains_diagnostic(self):
         artifact = self.clone_smoke()

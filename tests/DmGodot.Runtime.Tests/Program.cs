@@ -171,18 +171,34 @@ Semantics("optimized literal lists preserve order and duplicates", "test_literal
 Semantics("optimized reference lists preserve shared identity", "test_reference_lists",
     ["references=2:7,7", "shared=9,9"], ["references=2:7,7", "shared=9,9"], optimized: true);
 
-tests.Add(("pinned optimizer emits all four list constructor instructions", () => {
+tests.Add(("pinned optimizer emits numeric, string and resource list constructors", () => {
     var json = JsonNode.Parse(File.ReadAllText(optimizedPath))!;
     foreach (var (proc, opcode) in new[] {
         ("literal_numbers", DreamProcOpcode.CreateListNFloats),
         ("literal_strings", DreamProcOpcode.CreateListNStrings),
-        ("literal_resources", DreamProcOpcode.CreateListNResources),
-        ("literal_refs", DreamProcOpcode.CreateListNRefs)
+        ("literal_resources", DreamProcOpcode.CreateListNResources)
     }) {
         var definition = json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == proc)!;
         var code = Convert.FromBase64String(definition["Bytecode"]!.GetValue<string>());
         Check(code.Length > 0 && code[0] == (byte)opcode, $"Expected {proc} to start with {opcode}; bytecode={Convert.ToHexString(code)}.");
     }
+}));
+
+tests.Add(("reference list instruction preserves shared identity", () => {
+    // The pinned optimizer leaves argument-reference lists as individual pushes.
+    // Exercise its supported wire instruction explicitly in the compiled fixture.
+    var json = JsonNode.Parse(File.ReadAllText(optimizedPath))!;
+    var definition = json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "literal_refs")!;
+    byte[] code = [(byte)DreamProcOpcode.CreateListNRefs, 2, 0, 0, 0,
+        8, 0, 8, 1, (byte)DreamProcOpcode.Return];
+    definition["Bytecode"] = Convert.ToBase64String(code);
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    runtime.Boot();
+    runtime.InvokeGlobal("test_reference_lists");
+    Check(runtime.Logs.Select(x => x.Text).SequenceEqual(new[] {
+        "references=2:7,7", "shared=9,9"
+    }), "Reference list construction copied or reordered shared values.");
+    Check(runtime.PendingThreads == 0, "Continuation leaked.");
 }));
 
 var failed = 0;

@@ -11,6 +11,11 @@ revision and opcode hash are checked separately by the build tooling and loader.
   static DMM turf grids, and mapped entity coordinates.
 - Executes `world.New()` and global/instance procedure calls using explicit call
   frames. Numeric values use `float`, matching the currently targeted DM model.
+- Allocates ordinary datums with inherited type initialization and `New()` on explicit
+  construction continuations. Initializers run once through their inherited super chain;
+  constructor results are discarded and creation returns the allocated object. Normal
+  sleeping constructors suspend their caller; `waitfor=0` constructors detach at yield.
+  Direct and type-reference creation support positional arguments.
 - Implements nested `sleep()`, `spawn()` with copied local bindings and shared
   list/object references, and `set waitfor = 0` detachment on actual suspension.
 - Provides deterministic virtual decisecond time; equal-time continuations are
@@ -32,10 +37,10 @@ fixture/testing entry point, not a complete BYOND verb dispatch implementation.
 
 This is **not a complete BYOND world runtime**. Map entities are descriptors;
 the host's initial avatar/movement protocol does not execute DM Login, Move,
-Enter/Exit, or collision callbacks. Static map New() overrides, nontrivial type
+Enter/Exit, or collision callbacks. Static map New() overrides, map/world type
 initializers, sparse/overlapping maps, and map entity/area overrides are rejected
 rather than silently ignored. Areas are only checked for unsupported lifecycle
-code; no area object graph is exposed. Full atoms/loc/contents, object creation,
+code; no area object graph is exposed. Full atoms/loc/contents, native managed object creation,
 GC/deletion, associative-list construction, dynamic calls, native interfaces,
 files, database APIs, persistence, browser UI, resources/rendering, and most
 built-ins still need implementation. Constant tagged resources retain paths;
@@ -61,7 +66,8 @@ From the repository root:
 ```sh
 python3 scripts/compile.py fixtures/smoke/smoke.dme --output build/smoke.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/semantics.dme --output build/semantics.json
-dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/semantics.dme --output build/semantics-optimized.json --optimize
+dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json
 ```
 
 Tests exercise code emitted by the real compiler, scheduler interactions, map

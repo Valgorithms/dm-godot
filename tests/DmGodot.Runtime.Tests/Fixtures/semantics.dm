@@ -106,3 +106,128 @@
 
 /proc/literal_refs(a, b)
     return list(a, b)
+
+var/init_count = 0
+/proc/count_initializer()
+    init_count += 1
+    return init_count
+
+/datum/init_marker
+    var/value
+    New()
+        value = count_initializer()
+
+/datum/construction_parent
+    var/datum/init_marker/parent_value = new /datum/init_marker
+    var/list/values = list(1)
+    var/argument_value = 0
+    New(value)
+        argument_value = value
+        return 99
+
+/datum/construction_parent/child
+    var/datum/init_marker/child_value = new /datum/init_marker
+    New(value)
+        ..(value + 1)
+        return 123
+
+/proc/test_datum_initialization()
+    var/datum/construction_parent/child/first = new(4)
+    var/datum/construction_parent/child/second = new(8)
+    first.values[1] = 7
+    world << "init=[first.parent_value.value],[first.child_value.value],[second.parent_value.value],[second.child_value.value]"
+    world << "args=[first.argument_value],[second.argument_value]"
+    world << "lists=[first.values[1]],[second.values[1]]"
+    world << "distinct=[first != second]"
+
+/datum/sleeping_constructor
+    var/value = 0
+    New(argument)
+        world << "new-start"
+        sleep(1)
+        value = argument
+        world << "new-end"
+        return 99
+
+/proc/test_sleeping_constructor()
+    world << "caller-start"
+    var/datum/sleeping_constructor/result = new(7)
+    world << "caller-result=[result.value]"
+
+/datum/detached_constructor
+    var/value = 1
+    New()
+        set waitfor = 0
+        world << "detached-start"
+        sleep(1)
+        value = 2
+        world << "detached-end"
+
+/proc/test_detached_constructor()
+    var/datum/detached_constructor/result = new
+    world << "detached-result=[result.value]"
+    sleep(1)
+    world << "detached-later=[result.value]"
+
+/datum/nested_constructor
+    var/datum/sleeping_constructor/child
+    New()
+        child = new /datum/sleeping_constructor(11)
+
+/proc/test_nested_constructor()
+    var/datum/nested_constructor/result = new
+    world << "nested-result=[result.child.value]"
+
+/proc/test_dynamic_datum()
+    var/path = /datum/construction_parent
+    var/datum/construction_parent/result = new path(6)
+    world << "dynamic=[result.argument_value]"
+
+/proc/test_native_creation_error()
+    var/obj/result = new /obj
+    return result
+
+/proc/test_plain_datum()
+    var/datum/result = new /datum
+    world << "plain=[result.type == /datum]"
+
+/datum/recursive_constructor
+    New()
+        new /datum/recursive_constructor
+
+/proc/test_constructor_depth()
+    new /datum/recursive_constructor
+
+/proc/test_native_datum_error()
+    new /exception
+
+/proc/test_datum_parent_type()
+    var/datum/construction_parent/child/result = new(0)
+    world << "parent=[result.parent_type == /datum/construction_parent]"
+
+/proc/test_datum_vars_error()
+    var/datum/result = new /datum
+    world << result.vars
+
+/proc/test_datum_parent_write_error()
+    var/datum/result = new /datum
+    result.parent_type = /datum
+
+/datum/construction_parent/inherited_only
+
+/proc/test_inherited_initializer()
+    var/datum/construction_parent/inherited_only/result = new(3)
+    world << "inherited=[result.parent_value.value],[result.argument_value]"
+
+/datum/detached_nested_constructor
+    var/datum/sleeping_constructor/child
+    New()
+        set waitfor = 0
+        child = new /datum/sleeping_constructor(12)
+        world << "outer-done"
+
+/proc/test_detached_nested_constructor()
+    var/datum/detached_nested_constructor/result = new
+    world << "outer-returned=[result.child == null]"
+    sleep(1)
+    world << "outer-later=[result.child.value]"

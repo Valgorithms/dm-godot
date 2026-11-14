@@ -201,6 +201,33 @@ tests.Add(("reference list instruction preserves shared identity", () => {
     Check(runtime.PendingThreads == 0, "Continuation leaked.");
 }));
 
+Semantics("datum init inheritance, New args and instance identity", "test_datum_initialization",
+    ["init=1,2,3,4", "args=5,9", "lists=7,1", "distinct=1"],
+    ["init=1,2,3,4", "args=5,9", "lists=7,1", "distinct=1"]);
+Semantics("sleeping New suspends construction and caller", "test_sleeping_constructor",
+    ["caller-start", "new-start"], ["caller-start", "new-start", "new-end", "caller-result=7"]);
+Semantics("waitfor zero New returns object at suspension", "test_detached_constructor",
+    ["detached-start", "detached-result=1"], ["detached-start", "detached-result=1", "detached-end", "detached-later=2"]);
+Semantics("nested construction retains continuation across sleep", "test_nested_constructor",
+    ["new-start"], ["new-start", "new-end", "nested-result=11"]);
+Semantics("dynamic type reference construction preserves arguments", "test_dynamic_datum",
+    ["dynamic=6"], ["dynamic=6"]);
+Semantics("plain datum construction returns object", "test_plain_datum", ["plain=1"], ["plain=1"]);
+SemanticFailure("native atom allocation remains explicit", "test_native_creation_error", "native/atom type");
+SemanticFailure("construction errors retain DM source", "test_native_creation_error", "semantics.dm:");
+SemanticFailure("recursive constructors have bounded frames", "test_constructor_depth", "call depth limit");
+
+SemanticFailure("native datum allocation remains explicit", "test_native_datum_error", "native/atom type");
+
+Semantics("datum parent_type reflects inheritance", "test_datum_parent_type", ["parent=1"], ["parent=1"]);
+SemanticFailure("datum vars view is explicit", "test_datum_vars_error", "datum.vars is not implemented");
+SemanticFailure("datum parent_type cannot be changed", "test_datum_parent_write_error", "Mutation of datum.parent_type");
+
+Semantics("child without own initializer inherits initialization once", "test_inherited_initializer",
+    ["inherited=1,3"], ["inherited=1,3"]);
+Semantics("detached outer New retains sleeping nested construction", "test_detached_nested_constructor",
+    ["new-start", "outer-returned=1"], ["new-start", "outer-returned=1", "new-end", "outer-done", "outer-later=12"]);
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

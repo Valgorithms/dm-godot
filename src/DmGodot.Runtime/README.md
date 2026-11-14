@@ -9,6 +9,10 @@ revision and opcode hash are checked separately by the build tooling and loader.
 
 - Loads the pinned compiler's JSON, inherited constant type variables, globals,
   static DMM turf grids, and mapped entity coordinates.
+- Retains each static map turf and mapped movable as a DM object; unoverridden area
+  prototypes of the same type share an area object. `MapCells` exposes these identities.
+  DM reads of `loc` and coordinates use retained metadata, and instance methods can
+  retain ordinary user-variable state. Diagnostic records remain separate snapshots.
 - Executes `world.New()` and global/instance procedure calls using explicit call
   frames. Numeric values use `float`, matching the currently targeted DM model.
 - Allocates ordinary datums with inherited type initialization and `New()` on explicit
@@ -39,12 +43,16 @@ fixture/testing entry point, not a complete BYOND verb dispatch implementation.
 
 ## Explicit boundaries
 
-This is **not a complete BYOND world runtime**. Map entities are descriptors;
+This is **not a complete BYOND world runtime**. Static map objects now retain identity;
 the host's initial avatar/movement protocol does not execute DM Login, Move,
 Enter/Exit, or collision callbacks. Static map New() overrides, map/world type
 initializers, sparse/overlapping maps, and map entity/area overrides are rejected
 rather than silently ignored. Areas are only checked for unsupported lifecycle
-code; no area object graph is exposed. Full atoms/loc/contents, native managed object creation,
+code. Static loc links are readable (movable to turf, turf to area, area to null).
+Area coordinates use the lowest turf by z, y, then x. Contents and native appearance
+collection views remain explicit errors. Location/coordinate and diagnostic density/color
+mutation remain rejected so retained objects cannot silently diverge from snapshots.
+Full containment/movement, native managed object creation,
 GC/deletion, associative-list construction, dynamic calls, native interfaces,
 files, database APIs, persistence, browser UI, resources/rendering, and most
 built-ins still need implementation. Constant tagged resources retain paths;

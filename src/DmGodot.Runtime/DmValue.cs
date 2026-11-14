@@ -50,3 +50,6 @@ public sealed class DmList {
 public sealed record WorldTile(int X, int Y, int Z, bool Density, string Type, string? Color = null);
 public sealed record MapEntity(int X, int Y, int Z, string Type);
 public sealed record RuntimeLog(double Time, string Text);
+
+/// <summary>Retained static map objects; diagnostic records remain separate snapshots.</summary>
+public sealed record MapCellObjects(int X, int Y, int Z, DmObject Turf, DmObject Area, IReadOnlyList<DmObject> Entities);

@@ -249,6 +249,88 @@ Semantics("empty user datum methods return null through instance, self and super
     ["empty=1,1,1"], ["empty=1,1,1"]);
 SemanticFailure("inherited native stub is not treated as empty user method", "test_inherited_native_method", "Native proc");
 
+
+tests.Add(("map retains turf, shared area and mapped object identity", () => {
+    var runtime = new DmRuntime(CompiledProject.Load(path));
+    Check(runtime.MapCells.Count == 25, "Expected retained map cell for each turf.");
+    Check(runtime.MapCells.Select(c => c.Turf).Distinct().Count() == 25, "Turfs must be distinct objects.");
+    Check(runtime.MapCells.Select(c => c.Area).Distinct().Count() == 1, "Identical area prototypes must share an area.");
+    var cell = runtime.MapCells.Single(c => c.X == 3 && c.Y == 3);
+    var entity = cell.Entities.Single();
+    Check(entity.TypePath == "/mob/player", "Mapped entity identity type mismatch.");
+    runtime.Boot(); runtime.AdvanceBy(2);
+    var start = runtime.Logs.Count;
+    runtime.InvokeGlobal("test_mapped_instance", new(entity), new(cell.Turf), new(cell.Area));
+    runtime.InvokeGlobal("test_mapped_instance", new(entity), new(cell.Turf), new(cell.Area));
+    Check(runtime.Logs.Skip(start).Select(l => l.Text).SequenceEqual(new[] {
+        "links=1,1,1", "coordinates=3,3,1", "visits=1",
+        "links=1,1,1", "coordinates=3,3,1", "visits=2"
+    }), "Mapped DM reads or persistent method state mismatch.");
+    Check(ReferenceEquals(entity, runtime.MapCells.Single(c => c.X == 3 && c.Y == 3).Entities.Single()), "Mapped identity changed.");
+}));
+tests.Add(("repeated mapped entities are distinct instances", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    var objects = json["Maps"]![0]!["CellDefinitions"]!["c"]!["Objects"]!.AsArray();
+    objects.Add(objects[0]!.DeepClone());
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    var cell = runtime.MapCells.Single(c => c.X == 3 && c.Y == 3);
+    Check(cell.Entities.Count == 2 && !ReferenceEquals(cell.Entities[0], cell.Entities[1]), "Mapped entities were coalesced.");
+    runtime.Boot(); runtime.AdvanceBy(2);
+    runtime.InvokeGlobal("test_mapped_instance", new(cell.Entities[0]), new(cell.Turf), new(cell.Area));
+    Check(cell.Entities[0].Variables["map_visits"].Number == 1 && cell.Entities[1].Variables["map_visits"].Number == 0, "Instance state leaked.");
+}));
+tests.Add(("default area is retained and area coordinates follow lowest turf", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    foreach (var cell in json["Maps"]![0]!["CellDefinitions"]!.AsObject())
+        cell.Value!["Area"] = null;
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    var region = runtime.MapCells[0].Area;
+    Check(region.TypePath == "/area" && runtime.MapCells.All(c => ReferenceEquals(c.Area, region)), "world.area fallback was not shared.");
+    runtime.Boot(); runtime.AdvanceBy(2);
+    runtime.InvokeGlobal("test_map_coordinates", new(region));
+    Check(runtime.Logs[^1].Text == "coordinates=1,1,1", "Area coordinates must come from lowest turf.");
+}));
+tests.Add(("different area types retain distinct identities and coordinates", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    var areaId = json["Types"]!.AsArray().Select((type, id) => (type, id)).Single(p => p.type!["Path"]!.GetValue<string>() == "/area").id;
+    json["Maps"]![0]!["CellDefinitions"]!["a"]!["Area"]!["Type"] = areaId;
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    Check(runtime.MapCells.Select(c => c.Area).Distinct().Count() == 2, "Different areas coalesced.");
+    var station = runtime.MapCells.First(c => c.Area.TypePath == "/area/station").Area;
+    runtime.Boot(); runtime.AdvanceBy(2); runtime.InvokeGlobal("test_map_coordinates", new(station));
+    Check(runtime.Logs[^1].Text == "coordinates=2,2,1", "Area coordinate order mismatch.");
+}));
+void MapFailure(string name, Action<JsonNode> mutate, string error) {
+    tests.Add((name, () => {
+        var json = JsonNode.Parse(File.ReadAllText(path))!;
+        mutate(json);
+        Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), error);
+    }));
+}
+int TypeId(JsonNode json, string typePath) => json["Types"]!.AsArray().Select((type, id) => (type, id)).Single(p => p.type!["Path"]!.GetValue<string>() == typePath).id;
+MapFailure("non-turf cell type rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["Type"] = TypeId(j, "/mob/player"), "Map turf must");
+MapFailure("non-area cell type rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Area"]!["Type"] = TypeId(j, "/turf/floor"), "Map area must");
+MapFailure("non-movable mapped entity rejected", j => j["Maps"]![0]!["CellDefinitions"]!["c"]!["Objects"]![0]!["Type"] = TypeId(j, "/area/station"), "Map entity must");
+MapFailure("managed turf overrides are rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"] = new JsonObject { ["loc"] = null }, "Map turf override");
+MapFailure("default area custom lifecycle remains rejected", j => {
+    foreach (var cell in j["Maps"]![0]!["CellDefinitions"]!.AsObject()) cell.Value!["Area"] = null;
+    j["Types"]![TypeId(j, "/area")]!["Procs"] = new JsonArray(new JsonArray(JsonValue.Create(1)));
+}, "Map New() lifecycle");
+void MapFieldFailure(string proc, string error) {
+    tests.Add((error, () => {
+        var runtime = new DmRuntime(CompiledProject.Load(path));
+        runtime.Boot(); runtime.AdvanceBy(2);
+        var entity = runtime.MapCells.Single(c => c.X == 3 && c.Y == 3).Entities.Single();
+        Throws(() => runtime.InvokeGlobal(proc, new(entity)), error);
+    }));
+}
+MapFieldFailure("test_map_contents", "Map atom.contents is not implemented");
+MapFieldFailure("test_map_overlays", "Map atom.overlays is not implemented");
+MapFieldFailure("test_map_loc_write", "Mutation of map atom.loc");
+MapFieldFailure("test_map_coordinate_write", "Mutation of map atom.x");
+MapFieldFailure("test_map_density_write", "Mutation of map atom.density");
+MapFieldFailure("test_map_color_write", "Mutation of map atom.color");
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

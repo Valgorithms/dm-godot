@@ -1,0 +1,58 @@
+name: Pinned Civ13 compilation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/compile-civ13.yml'
+      - 'scripts/check_civ13_compile.py'
+      - 'scripts/compile.py'
+      - 'scripts/bootstrap_opendream.py'
+      - 'compatibility/targets.json'
+  pull_request:
+    paths:
+      - '.github/workflows/compile-civ13.yml'
+      - 'scripts/check_civ13_compile.py'
+      - 'scripts/compile.py'
+      - 'scripts/bootstrap_opendream.py'
+      - 'compatibility/targets.json'
+
+permissions:
+  contents: read
+
+jobs:
+  compile-civ13:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.404
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check out the complete pinned target
+        uses: actions/checkout@v4
+        with:
+          repository: Civ13/Civ13
+          ref: 98f34be22b7c594de1b9b113f9962cd61f6f0091
+          path: vendor/Civ13
+          persist-credentials: false
+      - name: Build pinned unmodified OpenDream compiler
+        run: python scripts/bootstrap_opendream.py
+      - name: Compile unchanged Civ13 and check source cleanliness
+        run: python scripts/check_civ13_compile.py vendor/Civ13
+      - name: Preserve diagnostics and provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: civ13-frontend-evidence
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/civ13/civ13.compiler.log
+            build/civ13/civ13.provenance.json
+            build/civ13/reproduction.json

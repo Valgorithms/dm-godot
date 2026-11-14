@@ -32,6 +32,7 @@ provenance and repeat hashes; there are no timing or memory regression threshold
 
 After building the pinned dependency and this project in Release, run:
 python scripts/benchmark_map_memory.py
-Results are written under build/map-memory-benchmark. The separate workflow also
+Results are written in a fresh run directory under build/map-memory-benchmark,
+so partial reruns cannot mix with old samples. The separate workflow also
 runs small real-process checks before the matrix. No runtime or compatibility
 probe behavior is changed.

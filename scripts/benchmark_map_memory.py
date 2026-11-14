@@ -8,6 +8,7 @@ from pathlib import Path
 import statistics
 import subprocess
 import sys
+import tempfile
 
 from bootstrap_opendream import find_dotnet
 
@@ -80,6 +81,7 @@ def aggregate(samples):
 def main():
     output = ROOT / "build/map-memory-benchmark"
     output.mkdir(parents=True, exist_ok=True)
+    output = Path(tempfile.mkdtemp(prefix="run-", dir=output))
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     samples = []
     for side, fields, rep in CASES:

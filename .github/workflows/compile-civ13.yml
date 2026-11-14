@@ -59,7 +59,8 @@ jobs:
         run: python scripts/check_civ13_compile.py vendor/Civ13
       - name: Measure first runtime compatibility boundary without hosting
         env:
-          DOTNET_GCHeapHardLimit: '0x40000000'
+          # Diagnostic 2 GiB GC heap cap after the 1 GiB construction OOM; not a memory optimization.
+          DOTNET_GCHeapHardLimit: '0x80000000'
         run: python scripts/check_civ13_runtime_probe.py
       - name: Preserve diagnostics and provenance
         if: always()

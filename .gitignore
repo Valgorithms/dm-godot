@@ -9,5 +9,6 @@ artifacts/*
 !artifacts/.gitkeep
 *.user
 *.log
+!compatibility/civ13.compiler.log
 .tools/
 

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-14",
+  "targets": [
+    {
+      "id": "civ13",
+      "repository": "https://github.com/Civ13/Civ13.git",
+      "revision": "98f34be22b7c594de1b9b113f9962cd61f6f0091",
+      "entrypoint": "civ13.dme",
+      "byond_compatibility_version": "516.1688",
+      "baseline": "compatibility/civ13-baseline.json",
+      "acceptance": "pending",
+      "notes": "Complete unchanged source/assets compiled through the pinned OpenDream frontend with 137 warnings; runtime, gameplay, and persistence acceptance remain pending.",
+      "compiler_status": "passed-with-warnings"
+    },
+    {
+      "id": "tgstation",
+      "repository": "https://github.com/tgstation/tgstation.git",
+      "revision": "9b10c26dacec3dc571f07c1e98f8ec903fa51597",
+      "entrypoint": "tgstation.dme",
+      "acceptance": "pending",
+      "notes": "Second compatibility target; repository not yet compiled or played with this engine."
+    }
+  ]
+}

@@ -22,7 +22,7 @@ design is in `docs/PLAN.md` and `docs/ARCHITECTURE.md`.
 
 ## Milestones
 
-- [ ] **M0: executable foundation.** Real DM/DME/DMM compilation; small runtime
+- [x] **M0: executable foundation.** Real DM/DME/DMM compilation; small runtime
   subset; world.New and cooperative scheduling; imported diagnostic map; two
   connected Godot clients; regression tests; explicit unsupported-feature errors.
 - [ ] **M1: DM conformance.** Complete values/lists, dynamic dispatch, type and
@@ -45,8 +45,9 @@ design is in `docs/PLAN.md` and `docs/ARCHITECTURE.md`.
 - OpenDream compiler: `846775a06b8fa4639772cb3e759adcc0133d9711`.
 
 See `compatibility/targets.json` and `docs/compatibility-baseline.md` for source
-provenance and the exact current evidence. A sparse Civ13 compiler attempt is
-blocked by absent assets and does not establish full compiler compatibility.
+provenance and the exact current evidence. The complete pinned Civ13 checkout
+compiled through the new pipeline without source edits (137 warnings). This
+establishes frontend compilation only; the new runtime has not booted Civ13.
 
 ## Acceptance boundaries
 
@@ -64,3 +65,18 @@ After the executable foundation is verified, implement real mob lifecycle and
 DM movement hooks, add DMI rendering, and convert Civ13 initialization gaps into
 focused conformance fixtures. Keep this issue open until all acceptance gates are
 met; link subsequent PRs and evidence here.
+
+## Foundation evidence (2026-11-14)
+
+- Full verification runner: 11 stages passed.
+- Compiler integration: 2 tests passed using real compiler invocations.
+- Runtime: 55 tests passed, including scheduler and malformed-artifact cases.
+- Godot protocol: 14 cases passed; client socket tests: 4 passed.
+- Source inventory and real host: 10 tests passed.
+- Two real Godot 4.7.2 clients observed each other and received authoritative
+  movement confirmations on the diagnostic grid.
+- Four independently reproduced review defects were fixed and rechecked.
+- Complete pinned Civ13 frontend compilation passed with 137 warnings.
+
+Details and limitations: `docs/VALIDATION.md`. GitHub Actions execution is pending
+repository publication; these results are local executable checks.

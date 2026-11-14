@@ -1,0 +1,172 @@
+using DmGodot.Runtime;
+using System.Text.Json.Nodes;
+
+var path = args.Length > 0 ? args[0] : "build/smoke.json";
+var tests = new List<(string Name, Action Run)>();
+void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+void Throws(Action action, string contains) {
+    try { action(); throw new Exception("Expected CompatibilityException."); }
+    catch (CompatibilityException ex) { Check(ex.Message.Contains(contains, StringComparison.OrdinalIgnoreCase), $"Expected '{contains}', got {ex.Message}"); }
+}
+
+tests.Add(("real compiler artifact / map dimensions and density", () => {
+    var runtime = new DmRuntime(CompiledProject.Load(path));
+    Check(runtime.Width == 5 && runtime.Height == 5 && runtime.Levels == 1, "Dimensions changed.");
+    Check(runtime.Tiles.Count == 25, "Expected 25 turfs.");
+    Check(runtime.Tiles.Count(t => t.Density) == 16, "Expected 16 walls.");
+    Check(runtime.MapEntities.Single().Type == "/mob/player", "Missing mapped mob.");
+    Check(runtime.MapEntities.Single().X == 3 && runtime.MapEntities.Single().Y == 3, "Mapped mob coordinate changed.");
+}));
+tests.Add(("nested sleep suspends caller; spawn runs independently", () => {
+    var runtime = new DmRuntime(CompiledProject.Load(path));
+    runtime.Boot();
+    Check(runtime.Logs.Select(x => x.Text).SequenceEqual(new[] { "boot", "sleep-start" }), "Boot execution order.");
+    runtime.AdvanceBy(1);
+    Check(runtime.Logs.Select(x => x.Text).SequenceEqual(new[] { "boot", "sleep-start", "spawn" }), "spawn did not execute while parent slept.");
+    runtime.AdvanceBy(1);
+    Check(runtime.Logs.Select(x => x.Text).SequenceEqual(new[] { "boot", "sleep-start", "spawn", "sleep-end", "ready" }), "sleep did not restore callers.");
+    Check(runtime.Logs.Select(x => x.Time).SequenceEqual(new double[] { 0, 0, 1, 2, 2 }), "Decisecond scheduling mismatch.");
+    Check(runtime.PendingThreads == 0, "Leaked scheduled thread.");
+}));
+tests.Add(("opcode version mismatch rejected", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    json["Metadata"]!["Version"] = "wrong-version";
+    Throws(() => CompiledProject.Parse(json.ToJsonString()), "bytecode version");
+}));
+tests.Add(("truncated bytecode rejected before execution", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    json["Procs"]![1]!["Bytecode"] = Convert.ToBase64String(new byte[] { 0x03, 0x01 });
+    Throws(() => CompiledProject.Parse(json.ToJsonString()), "truncated");
+}));
+tests.Add(("unknown opcode rejected before execution", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    json["Procs"]![1]!["Bytecode"] = Convert.ToBase64String(new byte[] { 0xff });
+    Throws(() => CompiledProject.Parse(json.ToJsonString()), "unknown opcode");
+}));
+tests.Add(("unsupported operation reports DM source", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    json["Procs"]![1]!["Bytecode"] = Convert.ToBase64String(new byte[] { 0x3d }); // browse, valid opcode but deliberately unsupported
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    Throws(runtime.Boot, "world.dm:8");
+}));
+tests.Add(("bad jump target rejected", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    json["Procs"]![1]!["Bytecode"] = Convert.ToBase64String(new byte[] { 0x0e, 2, 0, 0, 0 });
+    Throws(() => CompiledProject.Parse(json.ToJsonString()), "instruction boundary");
+}));
+tests.Add(("non-yielding loop has bounded execution", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    json["Procs"]![1]!["Bytecode"] = Convert.ToBase64String(new byte[] { 0x0e, 0, 0, 0, 0 });
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())) { InstructionBudget = 100 };
+    Throws(runtime.Boot, "budget exhausted");
+}));
+tests.Add(("type parent cycle rejected", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    json["Types"]![1]!["Parent"] = 1;
+    Throws(() => CompiledProject.Parse(json.ToJsonString()), "cyclic");
+}));
+
+tests.Add(("null metadata is rejected cleanly", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    json["Metadata"] = null;
+    Throws(() => CompiledProject.Parse(json.ToJsonString()), "required metadata");
+}));
+tests.Add(("custom map constructors are rejected rather than skipped", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    var mappedType = json["Types"]!.AsArray().First(t => t!["Path"]!.GetValue<string>() == "/mob/player")!;
+    mappedType["Procs"] = new JsonArray(new JsonArray(JsonValue.Create(1)));
+    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Map New() lifecycle");
+}));
+tests.Add(("direct unknown native procedure invocation fails explicitly", () => {
+    var runtime = new DmRuntime(CompiledProject.Load(path)); runtime.Boot();
+    Throws(() => runtime.InvokeGlobal("alert"), "native proc");
+}));
+
+void Malformed(string name, Action<JsonNode> mutate) {
+    tests.Add((name, () => {
+        var json = JsonNode.Parse(File.ReadAllText(path))!;
+        mutate(json);
+        Throws(() => CompiledProject.Parse(json.ToJsonString()), "artifact");
+    }));
+}
+Malformed("null Types array rejected", j => j["Types"] = null);
+Malformed("null Procs array rejected", j => j["Procs"] = null);
+Malformed("null Strings array rejected", j => j["Strings"] = null);
+Malformed("null type entry rejected", j => j["Types"]![0] = null);
+Malformed("null type path rejected", j => j["Types"]![0]!["Path"] = null);
+Malformed("null proc entry rejected", j => j["Procs"]![0] = null);
+Malformed("null proc name rejected", j => j["Procs"]![0]!["Name"] = null);
+Malformed("null procedure chain rejected", j => j["Types"]![1]!["Procs"]![0] = null);
+Malformed("null string entry rejected", j => j["Strings"]![0] = null);
+Malformed("null argument entry rejected", j => j["Procs"]![3]!["Arguments"]![0] = null);
+Malformed("null argument name rejected", j => j["Procs"]![3]!["Arguments"]![0]!["Name"] = null);
+Malformed("null source map rejected", j => j["Procs"]![1]!["SourceInfo"] = null);
+Malformed("null source entry rejected", j => j["Procs"]![1]!["SourceInfo"]![0] = null);
+Malformed("null global names collection rejected", j => j["Globals"]!["Names"] = null);
+Malformed("null global values collection rejected", j => j["Globals"]!["Globals"] = null);
+Malformed("null global name rejected", j => j["Globals"]!["Names"]![0] = null);
+Malformed("null map entry rejected", j => j["Maps"]![0] = null);
+Malformed("null map definitions rejected", j => j["Maps"]![0]!["CellDefinitions"] = null);
+Malformed("null map cell definition rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"] = null);
+Malformed("null map objects collection rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Objects"] = null);
+Malformed("null map object rejected", j => j["Maps"]![0]!["CellDefinitions"]!["c"]!["Objects"]![0] = null);
+Malformed("null map blocks collection rejected", j => j["Maps"]![0]!["Blocks"] = null);
+Malformed("null map block rejected", j => j["Maps"]![0]!["Blocks"]![0] = null);
+Malformed("null map block cells rejected", j => j["Maps"]![0]!["Blocks"]![0]!["Cells"] = null);
+Malformed("null map block cell key rejected", j => j["Maps"]![0]!["Blocks"]![0]!["Cells"]![0] = null);
+Malformed("null tagged type reference rejected", j => j["Types"]![1]!["Variables"]!["turf"]!["value"] = null);
+Malformed("null tagged value kind rejected", j => j["Types"]![1]!["Variables"]!["turf"]!["type"] = null);
+Malformed("null tagged resource path rejected", j => {
+    var turf = j["Types"]!.AsArray().First(t => t!["Path"]!.GetValue<string>() == "/turf")!;
+    turf["Variables"]!["icon"]!["resourcePath"] = null;
+});
+tests.Add(("map area overrides rejected rather than ignored", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    json["Maps"]![0]!["CellDefinitions"]!["a"]!["Area"]!["VarOverrides"] = new JsonObject { ["name"] = "custom area" };
+    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "area variable overrides");
+}));
+
+var semanticsPath = args.Length > 1 ? args[1] : "build/semantics.json";
+void Semantics(string name, string proc, string[] immediate, string[] afterOne) {
+    tests.Add((name, () => {
+        var runtime = new DmRuntime(CompiledProject.Load(semanticsPath));
+        runtime.Boot(); runtime.InvokeGlobal(proc);
+        Check(runtime.Logs.Select(x => x.Text).SequenceEqual(immediate), "Immediate logs: " + string.Join(", ", runtime.Logs.Select(x => x.Text)));
+        runtime.AdvanceBy(1);
+        Check(runtime.Logs.Select(x => x.Text).SequenceEqual(afterOne), "Delayed logs: " + string.Join(", ", runtime.Logs.Select(x => x.Text)));
+        Check(runtime.PendingThreads == 0, "Continuation leaked.");
+    }));
+}
+Semantics("waitfor=0 detaches only when callee sleeps", "test_waitfor",
+    ["caller-start", "worker-start", "caller-after"], ["caller-start", "worker-start", "caller-after", "worker-end"]);
+Semantics("spawn copies local bindings", "test_spawn_copy",
+    ["parent-local=2"], ["parent-local=2", "spawn-local=1"]);
+Semantics("spawn retains shared list references", "test_shared_list", [], ["spawn-list=2"]);
+Semantics("zero-delay scheduler preserves FIFO continuation order", "test_zero_delay",
+    ["before-zero", "spawn-zero", "after-zero"], ["before-zero", "spawn-zero", "after-zero"]);
+Semantics("negative spawn executes before caller continues", "test_negative_spawn",
+    ["spawn-negative", "after-negative"], ["spawn-negative", "after-negative"]);
+Semantics("DM arithmetic and branch execution", "test_arithmetic", ["arithmetic-ok"], ["arithmetic-ok"]);
+
+Semantics("integer modulo truncates floats and handles signed minimum", "test_integer_modulo", ["mod=1", "mod=-1", "mod=0"], ["mod=1", "mod=-1", "mod=0"]);
+Semantics("static world fields and implemented time remain readable", "test_world_static", ["time=0, fps=10"], ["time=0, fps=10"]);
+void SemanticFailure(string name, string proc, string error) {
+    tests.Add((name, () => {
+        var runtime = new DmRuntime(CompiledProject.Load(semanticsPath)); runtime.Boot();
+        Throws(() => runtime.InvokeGlobal(proc), error);
+    }));
+}
+SemanticFailure("fractional divisor coercing to zero raises DM diagnostic", "test_fractional_modulo_error", "Modulo divisor becomes zero after integer coercion");
+SemanticFailure("modulo failure retains source location", "test_fractional_modulo_error", "semantics.dm:");
+SemanticFailure("recursive negative spawn is bounded without host stack overflow", "test_negative_spawn_recursion", "Immediate spawn depth limit");
+SemanticFailure("world.tick_usage placeholder is rejected", "test_world_tick_usage", "world.tick_usage is not implemented");
+SemanticFailure("world.contents placeholder is rejected", "test_world_contents", "world.contents is not implemented");
+SemanticFailure("world.realtime placeholder is rejected", "test_world_realtime", "world.realtime is not implemented");
+
+var failed = 0;
+foreach (var (name, run) in tests) {
+    try { run(); Console.WriteLine($"PASS {name}"); }
+    catch (Exception ex) { failed++; Console.WriteLine($"FAIL {name}: {ex}"); }
+}
+Console.WriteLine($"{tests.Count - failed}/{tests.Count} runtime tests passed.");
+return failed == 0 ? 0 : 1;

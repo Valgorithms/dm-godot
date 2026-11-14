@@ -1,0 +1,436 @@
+using System.Text;
+using System.Text.Json;
+using DMCompiler.Bytecode;
+
+namespace DmGodot.Runtime;
+
+/// <summary>
+/// Experimental single-threaded DM execution core. Time is virtual deciseconds.
+/// Unsupported operations fail at their DM source location; they are never silently skipped.
+/// </summary>
+public sealed class DmRuntime {
+    public CompiledProject Project { get; }
+    public double Time { get; private set; }
+    public int Width { get; private set; }
+    public int Height { get; private set; }
+    public int Levels { get; private set; }
+    public IReadOnlyList<WorldTile> Tiles => _tiles;
+    public IReadOnlyList<MapEntity> MapEntities => _entities;
+    public IReadOnlyList<RuntimeLog> Logs => _logs;
+    public int PendingThreads => _queue.Count;
+    public DmObject World { get; }
+    private readonly List<WorldTile> _tiles = [];
+    private readonly List<MapEntity> _entities = [];
+    private readonly List<RuntimeLog> _logs = [];
+    private readonly PriorityQueue<Fiber, (double Time, long Sequence)> _queue = new();
+    private readonly DmValue[] _globals;
+    private long _sequence;
+    private bool _booted;
+    private int _budget;
+    private int _immediateSpawnDepth;
+    // Built-ins from the pinned OpenDream World.dm. User-defined vars remain ordinary fields.
+    private static readonly HashSet<string> BuiltinWorldFields = new(StringComparer.Ordinal) {
+        "contents", "vars", "log", "area", "turf", "mob", "name", "time", "timezone", "timeofday", "realtime",
+        "tick_lag", "cpu", "fps", "tick_usage", "loop_checks", "maxx", "maxy", "maxz", "icon_size", "view",
+        "movement_mode", "byond_version", "byond_build", "version", "address", "port", "internet_address", "url",
+        "visibility", "status", "process", "params", "sleep_offline", "system_type", "map_cpu", "hub", "hub_password",
+        "reachable", "game_state", "host", "map_format", "cache_lifespan", "executor", "opendream_topic_port"
+    };
+    private static readonly HashSet<string> ReadableWorldFields = new(StringComparer.Ordinal) {
+        "time", "maxx", "maxy", "maxz", "name", "area", "turf", "mob", "icon_size", "view", "byond_version", "byond_build",
+        "fps", "tick_lag"
+    };
+    public int InstructionBudget { get; init; } = 100_000;
+    private CompiledData Data => Project.Data;
+
+    public DmRuntime(CompiledProject project) {
+        Project = project;
+        _globals = new DmValue[Data.Globals?.GlobalCount ?? 0];
+        foreach (var (id, value) in Data.Globals?.GlobalValues ?? []) {
+            if (id < 0 || id >= _globals.Length) throw new CompatibilityException($"Invalid global index {id}.");
+            _globals[id] = ConvertValue(value);
+        }
+        World = CreateInstance(FindType("/world"));
+        LoadMaps();
+        World.Variables["maxx"] = Width;
+        World.Variables["maxy"] = Height;
+        World.Variables["maxz"] = Levels;
+    }
+
+    public void Boot() {
+        if (_booted) throw new InvalidOperationException("The world has already booted.");
+        _booted = true;
+        _budget = InstructionBudget;
+        if (Data.GlobalInitProc is { } init) {
+            var fiber = new Fiber(new Frame(init, null, []));
+            Execute(fiber);
+            if (fiber.Frames.Count > 0) throw new CompatibilityException("A yielding global initializer is not supported.");
+        }
+        var newProc = ResolveProc(World.TypeId, "New");
+        if (newProc is not null) Enqueue(new Fiber(new Frame(newProc, World, [])), Time);
+        AdvanceBy(0);
+    }
+
+    public void AdvanceBy(double deciseconds) {
+        if (!_booted) throw new InvalidOperationException("Boot the runtime before advancing it.");
+        if (!double.IsFinite(deciseconds) || deciseconds < 0) throw new ArgumentOutOfRangeException(nameof(deciseconds));
+        var target = Time + deciseconds;
+        if (!double.IsFinite(target)) throw new ArgumentOutOfRangeException(nameof(deciseconds));
+        _budget = InstructionBudget;
+        while (_queue.TryPeek(out _, out var priority) && priority.Time <= target) {
+            Time = priority.Time;
+            Execute(_queue.Dequeue());
+        }
+        Time = target;
+    }
+
+    /// <summary>Start a global proc at the current time, retaining DM call/sleep semantics.</summary>
+    public void InvokeGlobal(string name, params DmValue[] arguments) {
+        if (!_booted) throw new InvalidOperationException("Boot the runtime first.");
+        var id = (Data.GlobalProcs ?? []).FirstOrDefault(i => Data.Procs[i].Name == name, -1);
+        if (id < 0) throw new CompatibilityException($"Unknown global proc '{name}'.");
+        if (Data.Procs[id].Bytecode is not { Length: > 0 })
+            throw new CompatibilityException($"Direct invocation of an empty/native proc '{name}' is not implemented.");
+        Enqueue(new Fiber(new Frame(Data.Procs[id], null, arguments)), Time);
+        AdvanceBy(0);
+    }
+
+    public DmValue GetGlobal(string name) {
+        var index = Array.IndexOf(Data.Globals?.Names ?? [], name);
+        return index >= 0 && index < _globals.Length ? _globals[index] : throw new KeyNotFoundException(name);
+    }
+
+    private void Enqueue(Fiber fiber, double when) => _queue.Enqueue(fiber, (when, _sequence++));
+    private int FindType(string path) {
+        var id = Array.FindIndex(Data.Types, t => t.Path == path);
+        return id >= 0 ? id : throw new CompatibilityException($"Required type {path} is absent.");
+    }
+    private DmObject CreateInstance(int id) {
+        if (id < 0 || id >= Data.Types.Length) throw new CompatibilityException($"Invalid type ID {id}.");
+        var result = new DmObject(id, Data.Types[id].Path);
+        var chain = new Stack<TypeDefinition>();
+        for (int? current = id; current is not null; current = Data.Types[current.Value].Parent) chain.Push(Data.Types[current.Value]);
+        foreach (var type in chain) {
+            if (type.InitProc is int init && Data.Procs[init].Bytecode is { Length: > 0 })
+                throw new CompatibilityException($"Type initializers are not implemented: {type.Path}.");
+            foreach (var (name, value) in type.Variables ?? []) result.Variables[name] = ConvertValue(value);
+        }
+        result.Variables["type"] = new(new DmTypeReference(id, result.TypePath));
+        return result;
+    }
+    private DmValue ConvertValue(JsonElement value) => value.ValueKind switch {
+        JsonValueKind.Null => DmValue.Null,
+        JsonValueKind.Number => new(value.GetSingle()),
+        JsonValueKind.String => new(value.GetString()),
+        JsonValueKind.Object => ConvertTaggedValue(value),
+        _ => throw new CompatibilityException($"Unsupported compiler value: {value.ValueKind}.")
+    };
+    private DmValue ConvertTaggedValue(JsonElement value) {
+        var kind = value.GetProperty("type").GetInt32();
+        if (kind == 0) return new(new DmResource(value.GetProperty("resourcePath").GetString()!));
+        if (kind == 1) {
+            var id = value.GetProperty("value").GetInt32();
+            if (id < 0 || id >= Data.Types.Length) throw new CompatibilityException($"Invalid type value {id}.");
+            return new(new DmTypeReference(id, Data.Types[id].Path));
+        }
+        if (kind == 4) return new(float.PositiveInfinity);
+        if (kind == 5) return new(float.NegativeInfinity);
+        throw new CompatibilityException($"Compiler value kind {kind} is not implemented.");
+    }
+    private Procedure? ResolveProc(int typeId, string name) {
+        for (int? current = typeId; current is not null; current = Data.Types[current.Value].Parent)
+            foreach (var chain in Data.Types[current.Value].Procs ?? [])
+                for (var i = chain.Length - 1; i >= 0; i--)
+                    if (Data.Procs[chain[i]].Name == name) return Data.Procs[chain[i]];
+        return null;
+    }
+    private Procedure? SuperProc(Procedure proc) {
+        var owningType = Data.Types[proc.OwningTypeId];
+        foreach (var chain in owningType.Procs ?? []) {
+            var index = Array.FindIndex(chain, id => ReferenceEquals(Data.Procs[id], proc));
+            if (index > 0) return Data.Procs[chain[index - 1]];
+        }
+        return owningType.Parent is int parent ? ResolveProc(parent, proc.Name) : null;
+    }
+
+    private void LoadMaps() {
+        var cells = new Dictionary<(int, int, int), WorldTile>();
+        foreach (var map in Data.Maps ?? []) {
+            Width = Math.Max(Width, map.MaxX); Height = Math.Max(Height, map.MaxY); Levels = Math.Max(Levels, map.MaxZ);
+            foreach (var block in map.Blocks) {
+                if (block.Width <= 0 || block.Height <= 0 || (long)block.Width * block.Height != block.Cells.Length)
+                    throw new CompatibilityException("Malformed map block dimensions.");
+                for (var i = 0; i < block.Cells.Length; i++) {
+                    var x = block.X + i % block.Width;
+                    var y = block.Y + block.Height - 1 - i / block.Width;
+                    if (x < 1 || y < 1 || block.Z < 1 || x > map.MaxX || y > map.MaxY || block.Z > map.MaxZ)
+                        throw new CompatibilityException("Map block extends outside its declared dimensions.");
+                    if (!map.CellDefinitions.TryGetValue(block.Cells[i], out var cell)) throw new CompatibilityException("Missing map cell definition.");
+                    var turfId = cell.Turf?.Type ?? (World.Variables.GetValueOrDefault("turf").Value is DmTypeReference defaultTurf
+                        ? defaultTurf.Id : throw new CompatibilityException("world.turf must contain a type reference for default map filling."));
+                    var turf = CreateStaticMapInstance(turfId);
+                    if (cell.Area is not null) {
+                        if (cell.Area.VarOverrides is { Count: > 0 }) throw new CompatibilityException("Map area variable overrides are not implemented.");
+                        CreateStaticMapInstance(cell.Area.Type);
+                    }
+                    foreach (var (name, value) in cell.Turf?.VarOverrides ?? []) turf.Variables[name] = ConvertValue(value);
+                    if (cells.ContainsKey((x, y, block.Z))) throw new CompatibilityException("Overlapping map blocks are not implemented.");
+                    cells[(x, y, block.Z)] = new(x, y, block.Z, turf.Variables.GetValueOrDefault("density").IsTruthy, turf.TypePath, turf.Variables.GetValueOrDefault("color").Value as string);
+                    foreach (var entity in cell.Objects) {
+                        CreateStaticMapInstance(entity.Type);
+                        if (entity.VarOverrides is { Count: > 0 })
+                            throw new CompatibilityException("Map entity variable overrides are not implemented.");
+                        _entities.Add(new(x, y, block.Z, Data.Types[entity.Type].Path));
+                    }
+                }
+            }
+        }
+        if ((long)Width * Height * Levels != cells.Count)
+            throw new CompatibilityException("Sparse map default filling is not implemented.");
+        _tiles.AddRange(cells.Values.OrderBy(t => t.Z).ThenBy(t => t.Y).ThenBy(t => t.X));
+    }
+
+    private DmObject CreateStaticMapInstance(int typeId) {
+        var instance = CreateInstance(typeId);
+        var constructor = ResolveProc(typeId, "New");
+        while (constructor?.Bytecode is { Length: > 0 } code) {
+            // Upstream /atom.New only forwards its arguments to the empty /datum.New.
+            // Recognize that exact no-effect chain, not arbitrary user constructors.
+            byte[] forwardOnly = [(byte)DreamProcOpcode.Call, 6, 4, 0, 0, 0, 0, (byte)DreamProcOpcode.Pop];
+            if (!code.AsSpan().SequenceEqual(forwardOnly))
+                throw new CompatibilityException($"Map New() lifecycle is not implemented: {instance.TypePath}.");
+            constructor = SuperProc(constructor);
+        }
+        return instance;
+    }
+
+    private void Execute(Fiber fiber) {
+        while (fiber.Frames.Count > 0) {
+            var frame = fiber.Frames[^1];
+            var offset = frame.Reader.Position;
+            if (--_budget < 0) throw Fault(frame, offset, "Instruction budget exhausted; possible non-yielding loop.");
+            try {
+                if (offset == frame.Reader.Length) { Return(fiber, frame.Result); continue; }
+                var opcode = (DreamProcOpcode)frame.Reader.Byte();
+                switch (opcode) {
+                    case DreamProcOpcode.PushNull: frame.Push(DmValue.Null); break;
+                    case DreamProcOpcode.PushFloat: frame.Push(frame.Reader.Float()); break;
+                    case DreamProcOpcode.PushString: frame.Push(Project.String(frame.Reader.Int())); break;
+                    case DreamProcOpcode.PushType: { var id = frame.Reader.Int(); frame.Push(new(new DmTypeReference(id, Data.Types[id].Path))); break; }
+                    case DreamProcOpcode.PushResource: frame.Push(new(new DmResource(Project.String(frame.Reader.Int())))); break;
+                    case DreamProcOpcode.PushReferenceValue: frame.Push(Get(frame, frame.Reader.Reference())); break;
+                    case DreamProcOpcode.Pop: frame.Pop(); break;
+                    case DreamProcOpcode.Assign: case DreamProcOpcode.AssignNoPush: {
+                        var reference = frame.Reader.Reference(); var value = frame.Pop(); Set(frame, reference, value);
+                        if (opcode == DreamProcOpcode.Assign) frame.Push(value); break;
+                    }
+                    case DreamProcOpcode.Return: Return(fiber, frame.Pop()); break;
+                    case DreamProcOpcode.ReturnFloat: Return(fiber, frame.Reader.Float()); break;
+                    case DreamProcOpcode.ReturnReferenceValue: Return(fiber, Get(frame, frame.Reader.Reference())); break;
+                    case DreamProcOpcode.OutputReference: { var reference = frame.Reader.Reference(); var value = frame.Pop(); Output(Get(frame, reference), value); break; }
+                    case DreamProcOpcode.Output: { var value = frame.Pop(); Output(frame.Pop(), value); break; }
+                    case DreamProcOpcode.Call: {
+                        var reference = frame.Reader.Reference(); var args = Arguments(frame);
+                        Procedure? proc; DmObject? src = frame.Src;
+                        switch (reference.Kind) {
+                            case 2: proc = frame.Proc; break;
+                            case 6: proc = SuperProc(frame.Proc); break;
+                            case 11: proc = Data.Procs[reference.Value]; src = null; break;
+                            case 14: proc = src is not null ? ResolveProc(src.TypeId, Project.String(reference.Value)) : null; break;
+                            default: throw new CompatibilityException($"Call reference kind {reference.Kind} is not implemented.");
+                        }
+                        if (proc is null) {
+                            if (reference.Kind != 6) throw new CompatibilityException("Call to missing procedure.");
+                            frame.Push(DmValue.Null); break;
+                        }
+                        if (proc.OwningTypeId == 0 && proc.Name == "sleep" && proc.Bytecode is not { Length: > 0 }) {
+                            frame.Push(DmValue.Null);
+                            var delay = args.Length > 0 ? args[0].Number : 0;
+                            if (!float.IsFinite(delay)) throw new CompatibilityException("Non-finite sleep delay.");
+                            if (Suspend(fiber, Math.Max(0, delay))) return;
+                        } else {
+                            if (proc.Bytecode is not { Length: > 0 } && !(proc.Name == "New" || proc.Name == "Del"))
+                                throw new CompatibilityException($"Native proc '{proc.Name}' is not implemented.");
+                            if (fiber.Frames.Count >= 512) throw new CompatibilityException("Procedure call depth limit exceeded.");
+                            fiber.Frames.Add(new Frame(proc, src, args) { Usr = frame.Usr });
+                        }
+                        break;
+                    }
+                    case DreamProcOpcode.Spawn: {
+                        var jump = frame.Reader.Int(); var delay = frame.Pop().Number;
+                        if (!float.IsFinite(delay)) throw new CompatibilityException("Non-finite spawn delay.");
+                        var spawned = new Fiber(frame.Clone());
+                        frame.Reader.Position = jump;
+                        if (delay < 0) {
+                            if (_immediateSpawnDepth >= 128) throw new CompatibilityException("Immediate spawn depth limit exceeded.");
+                            _immediateSpawnDepth++;
+                            try { Execute(spawned); }
+                            finally { _immediateSpawnDepth--; }
+                        } else Enqueue(spawned, Time + delay);
+                        break;
+                    }
+                    case DreamProcOpcode.Jump: frame.Reader.Position = frame.Reader.Int(); break;
+                    case DreamProcOpcode.JumpIfFalse: case DreamProcOpcode.JumpIfTrue: {
+                        var jump = frame.Reader.Int(); var truth = frame.Pop().IsTruthy;
+                        if (truth == (opcode == DreamProcOpcode.JumpIfTrue)) frame.Reader.Position = jump; break;
+                    }
+                    case DreamProcOpcode.BooleanNot: frame.Push(frame.Pop().IsTruthy ? 0 : 1); break;
+                    case DreamProcOpcode.Negate: frame.Push(-frame.Pop().Number); break;
+                    case DreamProcOpcode.Add: { var right = frame.Pop(); var left = frame.Pop(); frame.Push(Add(left, right)); break; }
+                    case DreamProcOpcode.Subtract: Binary(frame, (a, b) => a - b); break;
+                    case DreamProcOpcode.Multiply: Binary(frame, (a, b) => a * b); break;
+                    case DreamProcOpcode.Divide: Binary(frame, (a, b) => b == 0 ? throw new CompatibilityException("Division by zero.") : a / b); break;
+                    case DreamProcOpcode.Modulus: Binary(frame, IntegerModulus); break;
+                    case DreamProcOpcode.CompareEquals: case DreamProcOpcode.CompareNotEquals: {
+                        var equal = frame.Pop().Equals(frame.Pop()); frame.Push(equal == (opcode == DreamProcOpcode.CompareEquals) ? 1 : 0); break;
+                    }
+                    case DreamProcOpcode.CompareLessThan: Compare(frame, (a, b) => a < b); break;
+                    case DreamProcOpcode.CompareLessThanOrEqual: Compare(frame, (a, b) => a <= b); break;
+                    case DreamProcOpcode.CompareGreaterThan: Compare(frame, (a, b) => a > b); break;
+                    case DreamProcOpcode.CompareGreaterThanOrEqual: Compare(frame, (a, b) => a >= b); break;
+                    case DreamProcOpcode.Append: case DreamProcOpcode.AppendNoPush: {
+                        var reference = frame.Reader.Reference();
+                        if (reference.Kind is 7 or 12) throw new CompatibilityException("Compound indexed/field assignment is not implemented.");
+                        var right = frame.Pop(); var value = Add(Get(frame, reference), right); Set(frame, reference, value);
+                        if (opcode == DreamProcOpcode.Append) frame.Push(value); break;
+                    }
+                    case DreamProcOpcode.FormatString: {
+                        var format = Project.String(frame.Reader.Int()); var values = frame.PopMany(frame.Reader.Int()); var result = new StringBuilder(); var index = 0;
+                        foreach (var ch in format) {
+                            if (!StringFormatEncoder.Decode(ch, out var suffix)) result.Append(ch);
+                            else if (suffix is StringFormatEncoder.FormatSuffix.StringifyWithArticle or StringFormatEncoder.FormatSuffix.StringifyNoArticle) {
+                                if (index >= values.Length) throw new CompatibilityException("Missing interpolation value.");
+                                if (values[index].Value is DmObject) throw new CompatibilityException("Object/article string interpolation is not implemented.");
+                                result.Append(values[index++].ToString());
+                            } else throw new CompatibilityException($"String format {suffix} is not implemented.");
+                        }
+                        if (index != values.Length) throw new CompatibilityException("Unused interpolation values.");
+                        frame.Push(result.ToString()); break;
+                    }
+                    case DreamProcOpcode.CreateList: { var list = new DmList(); list.Values.AddRange(frame.PopMany(frame.Reader.Int())); frame.Push(new(list)); break; }
+                    case DreamProcOpcode.DereferenceIndex: { var index = frame.Pop(); var list = frame.Pop().Value as DmList ?? throw new CompatibilityException("Only list indexing is implemented."); frame.Push(list.Get(index)); break; }
+                    case DreamProcOpcode.DereferenceField: { var name = Project.String(frame.Reader.Int()); frame.Push(Field(frame.Pop(), name)); break; }
+                    case DreamProcOpcode.PushRefAndDereferenceField: { var value = Get(frame, frame.Reader.Reference()); frame.Push(Field(value, Project.String(frame.Reader.Int()))); break; }
+                    case DreamProcOpcode.IsNull: frame.Push(frame.Pop().IsNull ? 1 : 0); break;
+                    case DreamProcOpcode.Length: { var value = frame.Pop().Value; frame.Push(value switch { string text => text.Length, DmList list => list.Values.Count, null => 0, _ => throw new CompatibilityException("length() on this value is not implemented.") }); break; }
+                    case DreamProcOpcode.PushNRefs: case DreamProcOpcode.PushNFloats: case DreamProcOpcode.PushNStrings: {
+                        var count = frame.Reader.Int(); for (var i = 0; i < count; i++) frame.Push(opcode switch {
+                            DreamProcOpcode.PushNRefs => Get(frame, frame.Reader.Reference()),
+                            DreamProcOpcode.PushNFloats => new(frame.Reader.Float()), _ => new(Project.String(frame.Reader.Int())) }); break;
+                    }
+                    case DreamProcOpcode.PushStringFloat: frame.Push(Project.String(frame.Reader.Int())); frame.Push(frame.Reader.Float()); break;
+                    default: throw new CompatibilityException($"Opcode {opcode} (0x{(byte)opcode:X2}) is not implemented.");
+                }
+            } catch (CompatibilityException ex) { throw Fault(frame, offset, ex.Message, ex); }
+            catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentOutOfRangeException or InvalidOperationException or KeyNotFoundException) { throw Fault(frame, offset, $"Malformed or unsupported execution: {ex.Message}", ex); }
+        }
+    }
+
+    private static DmValue Add(DmValue left, DmValue right) {
+        if (left.Value is string && right.Value is string) return left.ToString() + right.ToString();
+        return left.Number + right.Number;
+    }
+    private static float IntegerModulus(float left, float right) {
+        // DM % uses integer operands. Check the coerced divisor, not the original float.
+        var numerator = Math.Truncate((double)left);
+        var denominator = Math.Truncate((double)right);
+        if (!double.IsFinite(numerator) || !double.IsFinite(denominator) ||
+            numerator < int.MinValue || numerator > int.MaxValue || denominator < int.MinValue || denominator > int.MaxValue)
+            throw new CompatibilityException("Modulo operands outside the signed 32-bit integer range are not implemented.");
+        if (denominator == 0) throw new CompatibilityException("Modulo divisor becomes zero after integer coercion.");
+        // Widen first: int.MinValue % -1 must not trigger a host-language overflow exception.
+        return (float)((long)numerator % (long)denominator);
+    }
+    private static void Binary(Frame f, Func<float, float, float> op) { var b = f.Pop().Number; f.Push(op(f.Pop().Number, b)); }
+    private static void Compare(Frame f, Func<float, float, bool> op) { var b = f.Pop().Number; f.Push(op(f.Pop().Number, b) ? 1 : 0); }
+    private void Output(DmValue recipient, DmValue value) {
+        if (!ReferenceEquals(recipient.Value, World)) throw new CompatibilityException("Only world output is implemented.");
+        _logs.Add(new(Time, value.ToString()));
+    }
+    private DmValue[] Arguments(Frame frame) {
+        var kind = frame.Reader.Byte(); var count = frame.Reader.Int();
+        return kind switch {
+            0 when count == 0 => [], 1 => frame.PopMany(count), 4 when count == 0 => [.. frame.Arguments],
+            _ => throw new CompatibilityException($"Call argument mode {kind} is not implemented.")
+        };
+    }
+    private DmValue Field(DmValue owner, string name) {
+        if (owner.Value is DmList list && name == "len") return list.Values.Count;
+        if (owner.Value is not DmObject obj) throw new CompatibilityException($"Cannot read field '{name}' on this value.");
+        if (ReferenceEquals(obj, World)) {
+            if (BuiltinWorldFields.Contains(name) && !ReadableWorldFields.Contains(name))
+                throw new CompatibilityException($"world.{name} is not implemented.");
+            if (name == "time") return (float)Time;
+        }
+        return obj.Variables.TryGetValue(name, out var value) ? value : throw new CompatibilityException($"Unknown field '{name}'.");
+    }
+    private DmValue Get(Frame frame, Reference reference) => reference.Kind switch {
+        1 => new(frame.Src), 2 => frame.Result, 3 => frame.Usr, 5 => new(World),
+        8 => reference.Value < frame.Arguments.Length ? frame.Arguments[reference.Value] : DmValue.Null,
+        9 => frame.Locals[reference.Value], 10 => _globals[reference.Value],
+        12 => Field(frame.Pop(), Project.String(reference.Value)),
+        13 => Field(new(frame.Src), Project.String(reference.Value)),
+        7 => Index(frame),
+        _ => throw new CompatibilityException($"Read reference kind {reference.Kind} is not implemented.")
+    };
+    private static DmValue Index(Frame frame) { var index = frame.Pop(); var list = frame.Pop().Value as DmList ?? throw new CompatibilityException("Only list indexing is implemented."); return list.Get(index); }
+    private void Set(Frame frame, Reference reference, DmValue value) {
+        switch (reference.Kind) {
+            case 2: frame.Result = value; break;
+            case 8: if (reference.Value >= frame.Arguments.Length) Array.Resize(ref frame.Arguments, reference.Value + 1); frame.Arguments[reference.Value] = value; break;
+            case 9: frame.Locals[reference.Value] = value; break;
+            case 10: _globals[reference.Value] = value; break;
+            case 12: SetField(frame.Pop(), Project.String(reference.Value), value); break;
+            case 13: SetField(new(frame.Src), Project.String(reference.Value), value); break;
+            case 7: { var index = frame.Pop(); var list = frame.Pop().Value as DmList ?? throw new CompatibilityException("Only list indexing is implemented."); list.Set(index, value); break; }
+            default: throw new CompatibilityException($"Write reference kind {reference.Kind} is not implemented.");
+        }
+    }
+    private void SetField(DmValue owner, string name, DmValue value) {
+        if (owner.Value is not DmObject obj || !obj.Variables.ContainsKey(name)) throw new CompatibilityException($"Cannot assign field '{name}'.");
+        if (ReferenceEquals(obj, World) && BuiltinWorldFields.Contains(name)) throw new CompatibilityException($"Mutation of world.{name} is not implemented.");
+        obj.Variables[name] = value;
+    }
+    private static void Return(Fiber fiber, DmValue value) {
+        fiber.Frames.RemoveAt(fiber.Frames.Count - 1);
+        if (fiber.Frames.Count > 0) fiber.Frames[^1].Push(value);
+    }
+    // set waitfor=0 only detaches once execution actually yields, preserving synchronous work before sleep.
+    private bool Suspend(Fiber fiber, double delay) {
+        var split = fiber.Frames.FindLastIndex(f => (f.Proc.Attributes & 32) != 0);
+        if (split > 0) {
+            var continuation = new Fiber(); continuation.Frames.AddRange(fiber.Frames.Skip(split));
+            var result = fiber.Frames[split].Result;
+            fiber.Frames.RemoveRange(split, fiber.Frames.Count - split);
+            fiber.Frames[^1].Push(result);
+            Enqueue(continuation, Time + delay);
+            return false;
+        }
+        Enqueue(fiber, Time + delay);
+        return true;
+    }
+    private CompatibilityException Fault(Frame frame, int offset, string detail, Exception? inner = null) => new($"{detail} at {Project.Location(frame.Proc, offset)}", inner);
+
+    private sealed class Fiber {
+        public List<Frame> Frames { get; } = [];
+        public Fiber() { }
+        public Fiber(Frame frame) { Frames.Add(frame); }
+    }
+    private sealed class Frame {
+        public Procedure Proc { get; }
+        public ByteReader Reader { get; }
+        public DmObject? Src { get; }
+        public DmValue Usr;
+        public DmValue Result;
+        public DmValue[] Arguments;
+        public DmValue[] Locals;
+        public List<DmValue> Stack { get; } = [];
+        public Frame(Procedure proc, DmObject? src, DmValue[] args) {
+            Proc = proc; Reader = new(proc.Bytecode ?? []); Src = src; Arguments = [.. args]; Locals = new DmValue[Math.Max(256, proc.MaxVariableId + 1)];
+        }
+        public void Push(DmValue value) => Stack.Add(value);
+        public DmValue Pop() { if (Stack.Count == 0) throw new CompatibilityException("DM evaluation stack underflow."); var result = Stack[^1]; Stack.RemoveAt(Stack.Count - 1); return result; }
+        public DmValue[] PopMany(int count) { if (count < 0 || count > Stack.Count) throw new CompatibilityException("Invalid DM stack argument count."); var result = Stack.GetRange(Stack.Count - count, count).ToArray(); Stack.RemoveRange(Stack.Count - count, count); return result; }
+        public Frame Clone() { var frame = new Frame(Proc, Src, Arguments) { Usr = Usr, Result = Result, Locals = [.. Locals] }; frame.Reader.Position = Reader.Position; frame.Stack.AddRange(Stack); return frame; }
+    }
+}

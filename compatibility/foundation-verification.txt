@@ -1,0 +1,209 @@
+RUN /opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3 scripts/bootstrap_opendream.py --dotnet /workspace/scratch/da982c39ce54/.tools/dotnet/dotnet
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Robust.Shared.Maths -> /workspace/scratch/da982c39ce54/dm-godot/vendor/OpenDream/RobustToolbox/Robust.Shared.Maths/bin/Release/Robust.Shared.Maths.dll
+  DMCompiler -> /workspace/scratch/da982c39ce54/dm-godot/vendor/OpenDream/bin/DMCompiler/DMCompiler.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:01.47
+Pinned compiler ready: /workspace/scratch/da982c39ce54/dm-godot/vendor/OpenDream/bin/DMCompiler/DMCompiler.dll
+RUN /opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3 scripts/compile.py fixtures/smoke/smoke.dme --output build/smoke.json
+Compiling .smoke-md6riizc.dme on 516.1688
+Warning OD0000 at <internal>: Compiler optimizations (const folding, peephole opts, etc.) are disabled via the "--no-opts" arg. This results in slower code execution and is not representative of OpenDream performance.
+Compilation succeeded with 1 warnings
+Saved to /workspace/scratch/da982c39ce54/dm-godot/build/.smoke-md6riizc.json
+Total time: 00:00
+DM artifact: /workspace/scratch/da982c39ce54/dm-godot/build/smoke.json
+RUN /opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/semantics.dme --output build/semantics.json
+Compiling .semantics-w29lf4_z.dme on 516.1688
+Warning OD0000 at <internal>: Compiler optimizations (const folding, peephole opts, etc.) are disabled via the "--no-opts" arg. This results in slower code execution and is not representative of OpenDream performance.
+Compilation succeeded with 1 warnings
+Saved to /workspace/scratch/da982c39ce54/dm-godot/build/.semantics-w29lf4_z.json
+Total time: 00:00
+DM artifact: /workspace/scratch/da982c39ce54/dm-godot/build/semantics.json
+RUN /workspace/scratch/da982c39ce54/.tools/dotnet/dotnet build DmGodot.slnx -c Release -m:1 -p:UseSharedCompilation=false --nologo
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  DmGodot.Runtime -> /workspace/scratch/da982c39ce54/dm-godot/src/DmGodot.Runtime/bin/Release/net10.0/DmGodot.Runtime.dll
+  DmGodot.Host -> /workspace/scratch/da982c39ce54/dm-godot/src/DmGodot.Host/bin/Release/net10.0/DmGodot.Host.dll
+  DmGodot.Runtime.Tests -> /workspace/scratch/da982c39ce54/dm-godot/tests/DmGodot.Runtime.Tests/bin/Release/net10.0/DmGodot.Runtime.Tests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:03.07
+RUN /opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3 fixtures/smoke/check_compiler.py -v
+test_root_resource_and_failed_build_preserve_previous_artifact (__main__.CompilerIntegrationTests.test_root_resource_and_failed_build_preserve_previous_artifact) ... ok
+test_smoke_map_and_dmi_survive_relocation (__main__.CompilerIntegrationTests.test_smoke_map_and_dmi_survive_relocation) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 1.207s
+
+OK
+RUN /workspace/scratch/da982c39ce54/.tools/dotnet/dotnet tests/DmGodot.Runtime.Tests/bin/Release/net10.0/DmGodot.Runtime.Tests.dll build/smoke.json build/semantics.json
+PASS real compiler artifact / map dimensions and density
+PASS nested sleep suspends caller; spawn runs independently
+PASS opcode version mismatch rejected
+PASS truncated bytecode rejected before execution
+PASS unknown opcode rejected before execution
+PASS unsupported operation reports DM source
+PASS bad jump target rejected
+PASS non-yielding loop has bounded execution
+PASS type parent cycle rejected
+PASS null metadata is rejected cleanly
+PASS custom map constructors are rejected rather than skipped
+PASS direct unknown native procedure invocation fails explicitly
+PASS null Types array rejected
+PASS null Procs array rejected
+PASS null Strings array rejected
+PASS null type entry rejected
+PASS null type path rejected
+PASS null proc entry rejected
+PASS null proc name rejected
+PASS null procedure chain rejected
+PASS null string entry rejected
+PASS null argument entry rejected
+PASS null argument name rejected
+PASS null source map rejected
+PASS null source entry rejected
+PASS null global names collection rejected
+PASS null global values collection rejected
+PASS null global name rejected
+PASS null map entry rejected
+PASS null map definitions rejected
+PASS null map cell definition rejected
+PASS null map objects collection rejected
+PASS null map object rejected
+PASS null map blocks collection rejected
+PASS null map block rejected
+PASS null map block cells rejected
+PASS null map block cell key rejected
+PASS null tagged type reference rejected
+PASS null tagged value kind rejected
+PASS null tagged resource path rejected
+PASS map area overrides rejected rather than ignored
+PASS waitfor=0 detaches only when callee sleeps
+PASS spawn copies local bindings
+PASS spawn retains shared list references
+PASS zero-delay scheduler preserves FIFO continuation order
+PASS negative spawn executes before caller continues
+PASS DM arithmetic and branch execution
+PASS integer modulo truncates floats and handles signed minimum
+PASS static world fields and implemented time remain readable
+PASS fractional divisor coercing to zero raises DM diagnostic
+PASS modulo failure retains source location
+PASS recursive negative spawn is bounded without host stack overflow
+PASS world.tick_usage placeholder is rejected
+PASS world.contents placeholder is rejected
+PASS world.realtime placeholder is rejected
+55/55 runtime tests passed.
+RUN /workspace/scratch/da982c39ce54/.tools/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client --editor --quit
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[   0% ] [90m[1mfirst_scan_filesystem[22m | Started Project initialization (5 steps)[39m[0m
+[   0% ] [90m[1mfirst_scan_filesystem[22m | Scanning file structure...[39m[0m
+[  16% ] [90m[1mfirst_scan_filesystem[22m | Loading global class names...[39m[0m
+[  33% ] [90m[1mfirst_scan_filesystem[22m | Verifying GDExtensions...[39m[0m
+[  50% ] [90m[1mfirst_scan_filesystem[22m | Creating autoload scripts...[39m[0m
+[  66% ] [90m[1mfirst_scan_filesystem[22m | Initializing plugins...[39m[0m
+[  83% ] [90m[1mfirst_scan_filesystem[22m | Starting file scan...[39m[0m
+[92m[ DONE ][39m [1mfirst_scan_filesystem[22m
+[0m
+[   0% ] [90m[1mloading_editor_layout[22m | Started Loading editor (5 steps)[39m[0m
+[   0% ] [90m[1mloading_editor_layout[22m | Loading editor layout...[39m[0m
+[  16% ] [90m[1mloading_editor_layout[22m | Loading docks...[39m[0m
+[92m[ DONE ][39m [1mloading_editor_layout[22m
+[0m
+RUN /workspace/scratch/da982c39ce54/.tools/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client --script res://tests/protocol_test.gd
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+PROTOCOL_TESTS_OK 14 cases
+RUN /opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s client/tests -p test_*.py -v
+test_fragmented_utf8_frames_and_authoritative_move (test_client.ClientTransportTests.test_fragmented_utf8_frames_and_authoritative_move) ... ok
+test_rejects_protocol_mismatch (test_client.ClientTransportTests.test_rejects_protocol_mismatch) ... ok
+test_rejects_snapshot_before_welcome (test_client.ClientTransportTests.test_rejects_snapshot_before_welcome) ... ok
+test_rejects_unknown_messages (test_client.ClientTransportTests.test_rejects_unknown_messages) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 1.009s
+
+OK
+RUN /opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s tests -p test_*.py -v
+test_comments_literals_and_identifier_boundaries (test_audit_source.SourceInventoryTests.test_comments_literals_and_identifier_boundaries) ... ok
+test_fake_include_inside_multiline_string_is_ignored (test_audit_source.SourceInventoryTests.test_fake_include_inside_multiline_string_is_ignored) ... ok
+test_includes_comments_windows_paths_and_escape (test_audit_source.SourceInventoryTests.test_includes_comments_windows_paths_and_escape) ... ok
+test_offsets_and_newlines_preserved (test_audit_source.SourceInventoryTests.test_offsets_and_newlines_preserved) ... ok
+test_savefile_appearance_native_and_scheduler_are_detected (test_audit_source.SourceInventoryTests.test_savefile_appearance_native_and_scheduler_are_detected) ... ok
+test_zero_sample_limit_keeps_counts (test_audit_source.SourceInventoryTests.test_zero_sample_limit_keeps_counts) ... ok
+test_invalid_commands_cannot_crash_host_or_move_player (test_host.HostTests.test_invalid_commands_cannot_crash_host_or_move_player) ... ok
+test_malformed_json_and_invalid_names_recover (test_host.HostTests.test_malformed_json_and_invalid_names_recover) ... ok
+test_two_clients_occupancy_broadcast_and_disconnect (test_host.HostTests.test_two_clients_occupancy_broadcast_and_disconnect) ... ok
+test_wall_blocks_and_valid_move_remains_available (test_host.HostTests.test_wall_blocks_and_valid_move_remains_available) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 1.151s
+
+OK
+RUN /opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3 scripts/check_end_to_end.py
+{
+  "status": "passed",
+  "protocol": 1,
+  "mode": "diagnostic-grid",
+  "godot": "4.7.2.stable.official.ed1daf0bf",
+  "project": "build/smoke.json",
+  "clients": [
+    {
+      "id": "2",
+      "observed_players": [
+        "1",
+        "2"
+      ],
+      "x": 4,
+      "y": 2,
+      "z": 1
+    },
+    {
+      "id": "1",
+      "observed_players": [
+        "1",
+        "2"
+      ],
+      "x": 2,
+      "y": 3,
+      "z": 1
+    }
+  ],
+  "dm_logs": [
+    {
+      "type": "dm-log",
+      "time": 0,
+      "text": "boot"
+    },
+    {
+      "type": "dm-log",
+      "time": 0,
+      "text": "sleep-start"
+    },
+    {
+      "type": "dm-log",
+      "time": 1,
+      "text": "spawn"
+    },
+    {
+      "type": "dm-log",
+      "time": 2,
+      "text": "sleep-end"
+    },
+    {
+      "type": "dm-log",
+      "time": 2,
+      "text": "ready"
+    }
+  ],
+  "scope": "Two real Godot clients see each other and receive authoritative movement confirmations. DM mob lifecycle is not implemented."
+}
+VERIFICATION_PASSED: 11 stages in 16.2s

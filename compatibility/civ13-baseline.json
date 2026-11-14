@@ -1,0 +1,952 @@
+{
+  "byond_compatibility_version": "516.1688",
+  "checkout_kind": "complete pinned checkout; source unchanged",
+  "compiler_attempt": {
+    "artifact_bytes": 29481555,
+    "artifact_map_count": 1,
+    "artifact_proc_count": 28440,
+    "artifact_sha256": "3f99955404a94d9de24c9db7124acee3933d5f1f803b0503eb0fc0dc7e73382d",
+    "artifact_string_count": 60883,
+    "artifact_type_count": 15633,
+    "bytecode_version": "68EDA783AF1988164DED21B97F374810",
+    "command": "python3 scripts/compile.py /path/to/pinned/Civ13/civ13.dme --output /path/to/output/full-civ13.json --version 516.1688 --dotnet /path/to/dotnet",
+    "compiler_dll_sha256": "baf6cdf9d7e882fb442450fd6b33030445dac06c1fe5db41a1921f81906bd603",
+    "compiler_log": "compatibility/civ13.compiler.log",
+    "elapsed_seconds": 11.9,
+    "errors": {},
+    "exit_code": 0,
+    "optimized": false,
+    "output_sha256": "3d5c44d1f881e06635e2797889ef58be598eed1053c0929efcbf4452e9cf4aff",
+    "result": "Succeeded with 137 warnings using a complete, unmodified checkout; does not establish runtime compatibility.",
+    "runtime_or_client_started": false,
+    "source_git_status_clean": true,
+    "source_project_sha256": "29569143536de3a983228af27dc52fefaaab156bf03c4e8b70ee2d0c51941798",
+    "unimplemented_warnings": {
+      "/.obounds() is not implemented": 1,
+      "/.run() is not implemented": 2,
+      "/.shell() is not implemented": 9,
+      "/client.MeasureText() is not implemented": 1,
+      "/icon.Crop() is not implemented": 1,
+      "/savefile.ImportText() is not implemented": 3,
+      "/world.OpenPort() is not implemented": 2,
+      "/world.Profile() is not implemented": 7,
+      "set instant is not implemented": 12,
+      "src = view() is unimplemented and defaults to src = range()": 88
+    },
+    "warnings": {
+      "OD0000": 1,
+      "OD2800": 126,
+      "OD3204": 10
+    }
+  },
+  "compiler_revision": "846775a06b8fa4639772cb3e759adcc0133d9711",
+  "historical_unavailable_includes": [
+    {
+      "exists": false,
+      "file": "civ13.dme",
+      "inside_root": true,
+      "line": 1768,
+      "target": "maps/extraction/modern_city_extraction.dmm"
+    },
+    {
+      "exists": false,
+      "file": "civ13.dme",
+      "inside_root": true,
+      "line": 1771,
+      "target": "maps/extraction/industrial_district.dmm"
+    },
+    {
+      "exists": false,
+      "file": "civ13.dme",
+      "inside_root": true,
+      "line": 1773,
+      "target": "maps/nomads/nomads_gaia.dmm"
+    }
+  ],
+  "include_count": 1768,
+  "inventory_checkout_kind": "sparse: root files, code, interface, scripts/opendream, tools/byond",
+  "repository_tree_blob_bytes": 356336958,
+  "schema_version": 1,
+  "source_inventory": {
+    "decoding_warnings": [],
+    "features": {
+      "appearance": {
+        "animate": {
+          "occurrences": 85,
+          "samples": [
+            {
+              "file": "code/_helpers/matrices.dm",
+              "line": 15
+            },
+            {
+              "file": "code/_helpers/matrices.dm",
+              "line": 16
+            },
+            {
+              "file": "code/_helpers/matrices.dm",
+              "line": 17
+            }
+          ]
+        },
+        "appearance_flags": {
+          "occurrences": 67,
+          "samples": [
+            {
+              "file": "code/_onclick/hud/base_screen_objects.dm",
+              "line": 12
+            },
+            {
+              "file": "code/_onclick/hud/hover_name.dm",
+              "line": 69
+            },
+            {
+              "file": "code/_onclick/hud/hud_layout.dm",
+              "line": 365
+            }
+          ]
+        },
+        "filter": {
+          "occurrences": 7,
+          "samples": [
+            {
+              "file": "code/_onclick/hud/plane_master.dm",
+              "line": 19
+            },
+            {
+              "file": "code/_onclick/hud/plane_master.dm",
+              "line": 55
+            },
+            {
+              "file": "code/game/mob/living/carbon/human/update_icons.dm",
+              "line": 1504
+            }
+          ]
+        },
+        "filters": {
+          "occurrences": 32,
+          "samples": [
+            {
+              "file": "code/_onclick/hud/plane_master.dm",
+              "line": 17
+            },
+            {
+              "file": "code/_onclick/hud/plane_master.dm",
+              "line": 19
+            },
+            {
+              "file": "code/_onclick/hud/plane_master.dm",
+              "line": 39
+            }
+          ]
+        },
+        "icon": {
+          "occurrences": 124,
+          "samples": [
+            {
+              "file": "code/_helpers/icons.dm",
+              "line": 522
+            },
+            {
+              "file": "code/_helpers/icons.dm",
+              "line": 523
+            },
+            {
+              "file": "code/_helpers/icons.dm",
+              "line": 524
+            }
+          ]
+        },
+        "image": {
+          "occurrences": 693,
+          "samples": [
+            {
+              "file": "code/_helpers/icons.dm",
+              "line": 585
+            },
+            {
+              "file": "code/_helpers/icons.dm",
+              "line": 617
+            },
+            {
+              "file": "code/_onclick/hud/action.dm",
+              "line": 128
+            }
+          ]
+        },
+        "layer": {
+          "occurrences": 788,
+          "samples": [
+            {
+              "file": "code/_helpers/icons.dm",
+              "line": 567
+            },
+            {
+              "file": "code/_helpers/icons.dm",
+              "line": 570
+            },
+            {
+              "file": "code/_helpers/icons.dm",
+              "line": 575
+            }
+          ]
+        },
+        "maptext": {
+          "occurrences": 49,
+          "samples": [
+            {
+              "file": "code/_onclick/hud/hover_name.dm",
+              "line": 86
+            },
+            {
+              "file": "code/_onclick/hud/hover_name.dm",
+              "line": 169
+            },
+            {
+              "file": "code/_onclick/hud/hover_name.dm",
+              "line": 173
+            }
+          ]
+        },
+        "mutable_appearance": {
+          "occurrences": 4,
+          "samples": [
+            {
+              "file": "code/game/objects/items/paper/artstuff.dm",
+              "line": 133
+            },
+            {
+              "file": "code/game/objects/items/paper/artstuff.dm",
+              "line": 138
+            },
+            {
+              "file": "code/game/objects/items/paper/artstuff.dm",
+              "line": 261
+            }
+          ]
+        },
+        "overlays": {
+          "occurrences": 919,
+          "samples": [
+            {
+              "file": "code/__defines/subsystem.dm",
+              "line": 78
+            },
+            {
+              "file": "code/__defines/subsystem.dm",
+              "line": 82
+            },
+            {
+              "file": "code/__defines/subsystem.dm",
+              "line": 86
+            }
+          ]
+        },
+        "plane": {
+          "occurrences": 124,
+          "samples": [
+            {
+              "file": "code/_onclick/hud/base_screen_objects.dm",
+              "line": 19
+            },
+            {
+              "file": "code/_onclick/hud/hud.dm",
+              "line": 45
+            },
+            {
+              "file": "code/_onclick/hud/hud.dm",
+              "line": 57
+            }
+          ]
+        },
+        "render_source": {
+          "occurrences": 6,
+          "samples": [
+            {
+              "file": "code/_onclick/hud/plane_master.dm",
+              "line": 55
+            },
+            {
+              "file": "code/modules/visibility/root_tree_presenter.dm",
+              "line": 17
+            },
+            {
+              "file": "code/modules/visibility/root_tree_presenter.dm",
+              "line": 140
+            }
+          ]
+        },
+        "render_target": {
+          "occurrences": 10,
+          "samples": [
+            {
+              "file": "code/modules/1713/weather_chunks.dm",
+              "line": 26
+            },
+            {
+              "file": "code/modules/visibility/root_tree_presenter.dm",
+              "line": 17
+            },
+            {
+              "file": "code/modules/visibility/root_tree_presenter.dm",
+              "line": 94
+            }
+          ]
+        },
+        "screen_loc": {
+          "occurrences": 200,
+          "samples": [
+            {
+              "file": "code/_onclick/hud/action.dm",
+              "line": 106
+            },
+            {
+              "file": "code/_onclick/hud/attachment_strip.dm",
+              "line": 69
+            },
+            {
+              "file": "code/_onclick/hud/base_screen_objects.dm",
+              "line": 29
+            }
+          ]
+        },
+        "underlays": {
+          "occurrences": 35,
+          "samples": [
+            {
+              "file": "code/_helpers/icons.dm",
+              "line": 565
+            },
+            {
+              "file": "code/_onclick/hud/base_screen_objects.dm",
+              "line": 1165
+            },
+            {
+              "file": "code/_onclick/hud/base_screen_objects.dm",
+              "line": 1167
+            }
+          ]
+        },
+        "vis_contents": {
+          "occurrences": 36,
+          "samples": [
+            {
+              "file": "code/game/objects/structures/pedal_airship.dm",
+              "line": 295
+            },
+            {
+              "file": "code/game/objects/structures/pedal_airship.dm",
+              "line": 297
+            },
+            {
+              "file": "code/game/objects/structures/pedal_airship.dm",
+              "line": 323
+            }
+          ]
+        }
+      },
+      "browser": {
+        "browse": {
+          "occurrences": 34,
+          "samples": [
+            {
+              "file": "code/datums/browser.dm",
+              "line": 105
+            },
+            {
+              "file": "code/datums/browser.dm",
+              "line": 110
+            },
+            {
+              "file": "code/game/mob/crafting_atlas.dm",
+              "line": 338
+            }
+          ]
+        },
+        "browse_rsc": {
+          "occurrences": 40,
+          "samples": [
+            {
+              "file": "code/_helpers/files.dm",
+              "line": 18
+            },
+            {
+              "file": "code/_macros.dm",
+              "line": 86
+            },
+            {
+              "file": "code/datums/browser.dm",
+              "line": 63
+            }
+          ]
+        },
+        "link": {
+          "occurrences": 13,
+          "samples": [
+            {
+              "file": "code/game/mob/new_player/new_player.dm",
+              "line": 55
+            },
+            {
+              "file": "code/modules/admin/admin.dm",
+              "line": 596
+            },
+            {
+              "file": "code/modules/bug_reports/bug_reports.dm",
+              "line": 220
+            }
+          ]
+        },
+        "winexists": {
+          "occurrences": 2,
+          "samples": [
+            {
+              "file": "code/modules/client/asset_cache.dm",
+              "line": 48
+            },
+            {
+              "file": "code/modules/client/asset_cache.dm",
+              "line": 98
+            }
+          ]
+        },
+        "winget": {
+          "occurrences": 8,
+          "samples": [
+            {
+              "file": "code/game/mob/living/carbon/human/say.dm",
+              "line": 87
+            },
+            {
+              "file": "code/game/mob/typing_indicator.dm",
+              "line": 107
+            },
+            {
+              "file": "code/modules/client/client_procs.dm",
+              "line": 425
+            }
+          ]
+        },
+        "winset": {
+          "occurrences": 40,
+          "samples": [
+            {
+              "file": "code/datums/browser.dm",
+              "line": 150
+            },
+            {
+              "file": "code/game/core.dm",
+              "line": 6
+            },
+            {
+              "file": "code/game/mob/living/carbon/human/say.dm",
+              "line": 113
+            }
+          ]
+        }
+      },
+      "dynamic_dispatch": {
+        "arglist": {
+          "occurrences": 36,
+          "samples": [
+            {
+              "file": "code/_helpers/datum_pool.dm",
+              "line": 65
+            },
+            {
+              "file": "code/_helpers/datum_pool.dm",
+              "line": 117
+            },
+            {
+              "file": "code/_helpers/functional.dm",
+              "line": 5
+            }
+          ]
+        },
+        "call": {
+          "occurrences": 115,
+          "samples": [
+            {
+              "file": "code/_helpers/areas.dm",
+              "line": 91
+            },
+            {
+              "file": "code/_helpers/functional.dm",
+              "line": 5
+            },
+            {
+              "file": "code/_helpers/functional.dm",
+              "line": 16
+            }
+          ]
+        },
+        "hascall": {
+          "occurrences": 22,
+          "samples": [
+            {
+              "file": "code/datums/mind.dm",
+              "line": 214
+            },
+            {
+              "file": "code/game/mob/mob.dm",
+              "line": 523
+            },
+            {
+              "file": "code/modules/1713/book.dm",
+              "line": 153
+            }
+          ]
+        },
+        "ispath": {
+          "occurrences": 347,
+          "samples": [
+            {
+              "file": "code/_helpers/WWinput.dm",
+              "line": 116
+            },
+            {
+              "file": "code/_helpers/WWinput.dm",
+              "line": 118
+            },
+            {
+              "file": "code/_helpers/datum_pool.dm",
+              "line": 19
+            }
+          ]
+        },
+        "typesof": {
+          "occurrences": 152,
+          "samples": [
+            {
+              "file": "code/_helpers/global_lists.dm",
+              "line": 214
+            },
+            {
+              "file": "code/_helpers/global_lists.dm",
+              "line": 223
+            },
+            {
+              "file": "code/_helpers/global_lists.dm",
+              "line": 235
+            }
+          ]
+        }
+      },
+      "native": {
+        "call_ext": {
+          "occurrences": 7,
+          "samples": [
+            {
+              "file": "code/modules/kestrel/gaia_pilot.dm",
+              "line": 58
+            },
+            {
+              "file": "code/modules/kestrel/gaia_pilot.dm",
+              "line": 106
+            },
+            {
+              "file": "code/modules/kestrel/gaia_pilot.dm",
+              "line": 109
+            }
+          ]
+        },
+        "run": {
+          "occurrences": 2,
+          "samples": [
+            {
+              "file": "code/modules/admin/verbs/getlogs.dm",
+              "line": 28
+            },
+            {
+              "file": "code/modules/admin/verbs/getlogs.dm",
+              "line": 48
+            }
+          ]
+        },
+        "shell": {
+          "occurrences": 15,
+          "samples": [
+            {
+              "file": "code/game/mob/living/chat_overlay.dm",
+              "line": 129
+            },
+            {
+              "file": "code/game/mob/living/chat_overlay.dm",
+              "line": 131
+            },
+            {
+              "file": "code/modules/admin/verbs/bot_service.dm",
+              "line": 10
+            }
+          ]
+        }
+      },
+      "persistence": {
+        "/savefile": {
+          "occurrences": 72,
+          "samples": [
+            {
+              "file": "code/__byond_version_compat.dm",
+              "line": 10
+            },
+            {
+              "file": "code/modules/admin/ToRban.dm",
+              "line": 11
+            },
+            {
+              "file": "code/modules/admin/ToRban.dm",
+              "line": 58
+            }
+          ]
+        },
+        "ExportText": {
+          "occurrences": 6,
+          "samples": [
+            {
+              "file": "code/modules/agent_control/agent_view.dm",
+              "line": 89
+            },
+            {
+              "file": "code/modules/persistence/loading.dm",
+              "line": 1946
+            },
+            {
+              "file": "code/modules/persistence/loading.dm",
+              "line": 1951
+            }
+          ]
+        },
+        "Flush": {
+          "occurrences": 7,
+          "samples": [
+            {
+              "file": "code/modules/persistence/loading.dm",
+              "line": 1897
+            },
+            {
+              "file": "code/modules/persistence/loading.dm",
+              "line": 1923
+            },
+            {
+              "file": "code/modules/persistence/loading.dm",
+              "line": 1956
+            }
+          ]
+        },
+        "ImportText": {
+          "occurrences": 3,
+          "samples": [
+            {
+              "file": "code/modules/persistence/loading.dm",
+              "line": 1947
+            },
+            {
+              "file": "code/modules/persistence/stream/save_stream.dm",
+              "line": 490
+            },
+            {
+              "file": "code/modules/persistence/stream/save_stream.dm",
+              "line": 633
+            }
+          ]
+        }
+      },
+      "scheduling": {
+        "instant": {
+          "occurrences": 13,
+          "samples": [
+            {
+              "file": "code/game/mob/mob_movement.dm",
+              "line": 1207
+            },
+            {
+              "file": "code/game/mob/mob_movement.dm",
+              "line": 1243
+            },
+            {
+              "file": "code/game/mob/mob_movement.dm",
+              "line": 1277
+            }
+          ]
+        },
+        "map_cpu": {
+          "occurrences": 3,
+          "samples": [
+            {
+              "file": "code/processes/___defines.dm",
+              "line": 36
+            },
+            {
+              "file": "code/processes/___defines.dm",
+              "line": 37
+            },
+            {
+              "file": "code/processes/time_track.dm",
+              "line": 138
+            }
+          ]
+        },
+        "sleep": {
+          "occurrences": 366,
+          "samples": [
+            {
+              "file": "code/__defines/time_of_day.dm",
+              "line": 71
+            },
+            {
+              "file": "code/_helpers/game.dm",
+              "line": 217
+            },
+            {
+              "file": "code/_helpers/memory_lifetime_telemetry.dm",
+              "line": 63
+            }
+          ]
+        },
+        "spawn": {
+          "occurrences": 1266,
+          "samples": [
+            {
+              "file": "code/_helpers/game.dm",
+              "line": 145
+            },
+            {
+              "file": "code/_helpers/memory_lifetime_telemetry.dm",
+              "line": 57
+            },
+            {
+              "file": "code/_helpers/spawn_sync.dm",
+              "line": 71
+            }
+          ]
+        },
+        "tick_lag": {
+          "occurrences": 120,
+          "samples": [
+            {
+              "file": "code/__defines/math_physics.dm",
+              "line": 8
+            },
+            {
+              "file": "code/__defines/time.dm",
+              "line": 12
+            },
+            {
+              "file": "code/__defines/time.dm",
+              "line": 16
+            }
+          ]
+        },
+        "tick_usage": {
+          "occurrences": 63,
+          "samples": [
+            {
+              "file": "code/__defines/_tick.dm",
+              "line": 12
+            },
+            {
+              "file": "code/__defines/_tick.dm",
+              "line": 14
+            },
+            {
+              "file": "code/__defines/_tick.dm",
+              "line": 18
+            }
+          ]
+        },
+        "waitfor": {
+          "occurrences": 72,
+          "samples": [
+            {
+              "file": "code/_helpers/unsorted.dm",
+              "line": 604
+            },
+            {
+              "file": "code/_helpers/wall_clock.dm",
+              "line": 31
+            },
+            {
+              "file": "code/_onclick/hud/hover_name.dm",
+              "line": 129
+            }
+          ]
+        }
+      },
+      "world_runtime": {
+        "get_step": {
+          "occurrences": 461,
+          "samples": [
+            {
+              "file": "code/_helpers/unsorted.dm",
+              "line": 78
+            },
+            {
+              "file": "code/_helpers/unsorted.dm",
+              "line": 81
+            },
+            {
+              "file": "code/_helpers/unsorted.dm",
+              "line": 368
+            }
+          ]
+        },
+        "locate": {
+          "occurrences": 1231,
+          "samples": [
+            {
+              "file": "code/_helpers/game.dm",
+              "line": 63
+            },
+            {
+              "file": "code/_helpers/game.dm",
+              "line": 64
+            },
+            {
+              "file": "code/_helpers/game.dm",
+              "line": 114
+            }
+          ]
+        },
+        "orange": {
+          "occurrences": 28,
+          "samples": [
+            {
+              "file": "code/game/mob/groups/faction_start.dm",
+              "line": 25
+            },
+            {
+              "file": "code/game/mob/living/simple_animal/friendly/dogs.dm",
+              "line": 54
+            },
+            {
+              "file": "code/game/mob/mob_movement.dm",
+              "line": 1162
+            }
+          ]
+        },
+        "oview": {
+          "occurrences": 50,
+          "samples": [
+            {
+              "file": "code/game/mob/living/living.dm",
+              "line": 2
+            },
+            {
+              "file": "code/game/mob/living/simple_animal/friendly/cat.dm",
+              "line": 45
+            },
+            {
+              "file": "code/game/mob/living/simple_animal/friendly/cat.dm",
+              "line": 104
+            }
+          ]
+        },
+        "range": {
+          "occurrences": 591,
+          "samples": [
+            {
+              "file": "code/_helpers/game.dm",
+              "line": 73
+            },
+            {
+              "file": "code/_onclick/hud/hover_name.dm",
+              "line": 287
+            },
+            {
+              "file": "code/game/atoms.dm",
+              "line": 613
+            }
+          ]
+        },
+        "step": {
+          "occurrences": 69,
+          "samples": [
+            {
+              "file": "code/game/atoms_movable.dm",
+              "line": 255
+            },
+            {
+              "file": "code/game/atoms_movable.dm",
+              "line": 263
+            },
+            {
+              "file": "code/game/mob/living/carbon/carbon.dm",
+              "line": 363
+            }
+          ]
+        },
+        "view": {
+          "occurrences": 217,
+          "samples": [
+            {
+              "file": "code/_helpers/game.dm",
+              "line": 54
+            },
+            {
+              "file": "code/_helpers/unsorted.dm",
+              "line": 573
+            },
+            {
+              "file": "code/_onclick/hud/hover_name.dm",
+              "line": 288
+            }
+          ]
+        },
+        "walk": {
+          "occurrences": 64,
+          "samples": [
+            {
+              "file": "code/game/mob/living/carbon/human/playstyle_traits.dm",
+              "line": 159
+            },
+            {
+              "file": "code/game/mob/living/simple_animal/friendly/cat.dm",
+              "line": 57
+            },
+            {
+              "file": "code/game/mob/living/simple_animal/friendly/cat.dm",
+              "line": 110
+            }
+          ]
+        }
+      }
+    },
+    "files_scanned": 1786,
+    "kind": "lexical_dependency_inventory",
+    "limitations": [
+      "Not a compile result, compatibility score, reachability analysis, or runtime acceptance test.",
+      "Scans all .dm/.dme files, including inactive preprocessor branches and unused files.",
+      "Does not expand macros or evaluate interpolation inside strings.",
+      "Counts identifier/call syntax; definitions and user-defined names can be included.",
+      "Include paths are relative to the containing file; build search paths are not resolved."
+    ],
+    "source_lines": 535667
+  },
+  "sparse_compiler_attempt": {
+    "command": "dotnet vendor/OpenDream/bin/DMCompiler/DMCompiler.dll --version=516.1688 /path/to/pinned/Civ13/civ13.dme",
+    "errors": {
+      "OD0404": 14058,
+      "OD1001": 1
+    },
+    "exit_code": 1,
+    "output_sha256": "730b1b296a56880468cbd82c07ce008eb201281d2adf512ffeef2be95ee7c792",
+    "result": "Failed on missing files in deliberately sparse checkout; not evidence of source incompatibility or successful compilation.",
+    "runtime_or_client_started": false,
+    "unimplemented_warnings": {
+      "/.obounds() is not implemented": 1,
+      "/.run() is not implemented": 2,
+      "/.shell() is not implemented": 9,
+      "/client.MeasureText() is not implemented": 1,
+      "/icon.Crop() is not implemented": 1,
+      "/savefile.ImportText() is not implemented": 3,
+      "/world.OpenPort() is not implemented": 2,
+      "/world.Profile() is not implemented": 7,
+      "set instant is not implemented": 12,
+      "src = view() is unimplemented and defaults to src = range()": 88
+    },
+    "warnings": {
+      "OD2800": 126,
+      "OD3204": 10
+    }
+  },
+  "target_revision": "98f34be22b7c594de1b9b113f9962cd61f6f0091"
+}

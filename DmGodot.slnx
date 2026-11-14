@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DmGodot.Runtime/DmGodot.Runtime.csproj" />
+    <Project Path="src/DmGodot.Host/DmGodot.Host.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DmGodot.Runtime.Tests/DmGodot.Runtime.Tests.csproj" />
+  </Folder>
+</Solution>

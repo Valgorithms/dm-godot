@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup>
+  <!-- Wire-format definitions from the pinned MIT-licensed OpenDream checkout. -->
+  <ItemGroup>
+    <Compile Include="../../vendor/OpenDream/DMCompiler/Bytecode/DreamProcOpcode.cs" Link="Upstream/DreamProcOpcode.cs" />
+    <Compile Include="../../vendor/OpenDream/DMCompiler/Bytecode/OpcodeMetadata.cs" Link="Upstream/OpcodeMetadata.cs" />
+    <Compile Include="../../vendor/OpenDream/DMCompiler/Bytecode/OpcodeVerifier.cs" Link="Upstream/OpcodeVerifier.cs" />
+    <Compile Include="../../vendor/OpenDream/DMCompiler/Bytecode/StringFormatEncoder.cs" Link="Upstream/StringFormatEncoder.cs" />
+  </ItemGroup>
+</Project>

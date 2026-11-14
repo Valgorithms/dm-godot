@@ -1,0 +1,141 @@
+Compiling .full-civ13-h2cs9ktw.dme on 516.1688
+Warning OD0000 at <internal>: Compiler optimizations (const folding, peephole opts, etc.) are disabled via the "--no-opts" arg. This results in slower code execution and is not representative of OpenDream performance.
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/living/simple_animal/simple_animal.dm:818:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/items/weapons/animal_tack.dm:92:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/complex_animal/dog.dm:78:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/living/simple_animal/friendly/cat.dm:159:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/living/carbon/give.dm:48:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/living/carbon/give.dm:110:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/living/carbon/human/human.dm:688:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/living/carbon/human/human.dm:989:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/living/carbon/human/nomads_adoption.dm:78:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/cmss13_care.dm:54:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/cmss13_command.dm:126:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/cmss13_squad.dm:426:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/cmss13_squad.dm:434:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/datums/extensions/extensions.dm:133:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/items.dm:446:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/weapons/guns/mg/_stationary.dm:219:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/weapons/guns/mg/_stationary.dm:234:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/items/weapons/storage/storage.dm:52:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/cmss13_gear.dm:159:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/cmss13_gear.dm:153:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/preserves.dm:129:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/items/cards.dm:69:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/items/cards.dm:105:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/telephone.dm:58:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/telephone.dm:81:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/radio.dm:606:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/lantern.dm:202:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/projectiles/ammunition.dm:357:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/_magsmodern.dm:1016:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/rope_making.dm:69:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/crafting_atlas.dm:37:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/crafting_atlas.dm:43:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/crafting_atlas.dm:49:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/space/surface_rovers.dm:467:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/crates_lockers/closets.dm:337:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/cmss13_gear.dm:147:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/cmss13_ops.dm:255:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/reagents/reagent_dispenser.dm:111:14: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/kitchen/cooked_meals.dm:65:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/kitchen/stone_kiln_upgrade.dm:184:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/items/weapons/nomadstuff.dm:65:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/stool_bed_chair_nest/chairs.dm:63:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/stool_bed_chair_nest/chairs.dm:85:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/craft/vehicle_papers.dm:238:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/items/weapons/nomadstuff.dm:185:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/tree_climbing.dm:323:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/tree_climbing.dm:329:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/tree_climbing.dm:335:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/craft/vehicle_tow.dm:320:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/minimap.dm:98:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/iv_drip.dm:142:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/optable.dm:98:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/craft/carriage_papers.dm:150:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/roulette_table.dm:180:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/table.dm:61:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/table.dm:174:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/table.dm:186:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/window.dm:327:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/objects/structures/window.dm:343:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/factory_arms.dm:169:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/factory_arms.dm:162:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/factory_arms.dm:139:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/factory_arms.dm:145:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/factory_chemistry.dm:395:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/factory_chemistry.dm:409:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/factory_routing.dm:176:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/factory_routing.dm:190:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/train_platforms.dm:331:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/trains.dm:236:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/trains.dm:626:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/factory_pipes.dm:519:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/factory_packaging.dm:124:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/hydraulic_fracturing.dm:46:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/stone_crushing.dm:210:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/cmss13_marks.dm:386:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/hydroponics.dm:330:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/wood_ash_compost.dm:83:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/radio.dm:98:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/trains.dm:126:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/trains.dm:142:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/telegraph.dm:33:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/telegraph.dm:306:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/machinery/nuclear_generation.dm:103:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/train_routes.dm:217:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/forensics.dm:773:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/forensics.dm:788:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/machinery/washing_machine.dm:90:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/mob_movement.dm:1207:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/mob_movement.dm:1243:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/mob_movement.dm:1277:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/mob_movement.dm:1313:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/mob_movement.dm:1348:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/mob_movement.dm:1357:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/mob_movement.dm:1366:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/mob_movement.dm:1377:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/mob_movement.dm:1428:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/mob_movement.dm:1452:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/client/ping.dm:3:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/client/ping.dm:13:6: set instant is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/mob.dm:983:13: src = view() is unimplemented and defaults to src = range()
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/game/mob/living/carbon/human/subtile_movement.dm:884:27: /.obounds() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/_helpers/icons.dm:636:7: /icon.Crop() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/admin/profile_dump.dm:9:23: /world.Profile() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/loading.dm:1709:13: /.shell() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/loading.dm:1711:13: /.shell() is not implemented
+Warning OD3204 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/train_transfer_codec.dm:149:6: Order of operations for "in" may not be what is expected. Use parentheses to be more explicit.
+Warning OD3204 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/train_transfer_codec.dm:191:8: Order of operations for "in" may not be what is expected. Use parentheses to be more explicit.
+Warning OD3204 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/train_transfer_codec.dm:256:6: Order of operations for "in" may not be what is expected. Use parentheses to be more explicit.
+Warning OD3204 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/train_transfer_codec.dm:275:6: Order of operations for "in" may not be what is expected. Use parentheses to be more explicit.
+Warning OD3204 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/train_transfer_codec.dm:282:8: Order of operations for "in" may not be what is expected. Use parentheses to be more explicit.
+Warning OD3204 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/train_transfer_codec.dm:299:6: Order of operations for "in" may not be what is expected. Use parentheses to be more explicit.
+Warning OD3204 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/train_transfer_codec.dm:326:6: Order of operations for "in" may not be what is expected. Use parentheses to be more explicit.
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/admin/profile_dump.dm:19:8: /world.Profile() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/nomads_lifecycle.dm:181:13: /world.OpenPort() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/nomads_lifecycle.dm:182:10: /world.OpenPort() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/stream/save_stream.dm:490:5: /savefile.ImportText() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/stream/save_stream.dm:633:10: /savefile.ImportText() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/tdm_barracks/battle.dm:197:6: /.shell() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/tdm_barracks/battle.dm:204:3: /.shell() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/tdm_barracks/battle.dm:206:3: /.shell() is not implemented
+Warning OD3204 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/extraction/equipment.dm:228:27: Order of operations for "in" may not be what is expected. Use parentheses to be more explicit.
+Warning OD3204 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/1713/gunsmithing/firearm_components.dm:3516:47: Order of operations for "in" may not be what is expected. Use parentheses to be more explicit.
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/_onclick/hud/hover_name.dm:137:17: /client.MeasureText() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/processes/time_track.dm:135:9: /world.Profile() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/processes/time_track.dm:136:9: /world.Profile() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/processes/time_track.dm:145:9: /world.Profile() is not implemented
+Warning OD3204 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/durable_world.dm:290:2: Order of operations for "in" may not be what is expected. Use parentheses to be more explicit.
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/persistence/loading.dm:1947:4: /savefile.ImportText() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/admin/profile_dump.dm:37:10: /world.Profile() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/admin/profile_dump.dm:45:10: /world.Profile() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/admin/verbs/getlogs.dm:28:9: /.run() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/admin/verbs/getlogs.dm:48:9: /.run() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/admin/verbs/bot_service.dm:10:10: /.shell() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/admin/verbs/bot_service.dm:26:22: /.shell() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/admin/verbs/bot_service.dm:28:22: /.shell() is not implemented
+Warning OD2800 at /workspace/scratch/da982c39ce54/compat-targets/Civ13/code/modules/admin/verbs/bot_service.dm:30:22: /.shell() is not implemented
+Compilation succeeded with 137 warnings
+Saved to /workspace/scratch/da982c39ce54/compat-targets/.full-civ13-h2cs9ktw.json
+Total time: 00:11

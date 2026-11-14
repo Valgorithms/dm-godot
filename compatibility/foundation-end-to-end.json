@@ -1,0 +1,57 @@
+{
+  "status": "passed",
+  "protocol": 1,
+  "mode": "diagnostic-grid",
+  "godot": "4.7.2.stable.official.ed1daf0bf",
+  "project": "build/smoke.json",
+  "clients": [
+    {
+      "id": "2",
+      "observed_players": [
+        "1",
+        "2"
+      ],
+      "x": 4,
+      "y": 2,
+      "z": 1
+    },
+    {
+      "id": "1",
+      "observed_players": [
+        "1",
+        "2"
+      ],
+      "x": 2,
+      "y": 3,
+      "z": 1
+    }
+  ],
+  "dm_logs": [
+    {
+      "type": "dm-log",
+      "time": 0,
+      "text": "boot"
+    },
+    {
+      "type": "dm-log",
+      "time": 0,
+      "text": "sleep-start"
+    },
+    {
+      "type": "dm-log",
+      "time": 1,
+      "text": "spawn"
+    },
+    {
+      "type": "dm-log",
+      "time": 2,
+      "text": "sleep-end"
+    },
+    {
+      "type": "dm-log",
+      "time": 2,
+      "text": "ready"
+    }
+  ],
+  "scope": "Two real Godot clients see each other and receive authoritative movement confirmations. DM mob lifecycle is not implemented."
+}

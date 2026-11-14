@@ -72,3 +72,15 @@
 
 /proc/test_map_color_write(atom/item)
     item.color = "#000000"
+
+/proc/test_map_color_read(atom/item)
+    world << item.color
+
+/proc/test_map_bounds_read(atom/movable/item)
+    world << item.bound_width
+
+/proc/test_map_client_read(mob/item)
+    world << item.client
+
+/proc/test_map_sight_write(mob/item)
+    item.sight = 0

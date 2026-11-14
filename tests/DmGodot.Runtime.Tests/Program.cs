@@ -331,6 +331,11 @@ MapFieldFailure("test_map_coordinate_write", "Mutation of map atom.x");
 MapFieldFailure("test_map_density_write", "Mutation of map atom.density");
 MapFieldFailure("test_map_color_write", "Mutation of map atom.color");
 
+MapFieldFailure("test_map_color_read", "Map atom.color is not implemented");
+MapFieldFailure("test_map_bounds_read", "Map atom.bound_width is not implemented");
+MapFieldFailure("test_map_client_read", "Map atom.client is not implemented");
+MapFieldFailure("test_map_sight_write", "Mutation of map atom.sight");
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

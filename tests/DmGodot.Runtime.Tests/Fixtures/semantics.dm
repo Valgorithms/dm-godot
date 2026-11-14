@@ -325,3 +325,18 @@ var/init_count = 0
 /proc/test_inherited_native_method()
     var/datum/empty_method_owner/target = new
     target.Read(null)
+
+/datum/cache_parent
+    var/scalar = 4
+    var/text_value = "parent"
+    var/type_value = /datum/cache_parent
+    var/resource_value = 'semantics.dm'
+    var/list/items = list(1, list(2))
+
+/datum/cache_parent/child
+    scalar = 7
+
+var/datum/cache_parent/cache_last
+
+/proc/test_cache_allocate()
+    cache_last = new /datum/cache_parent/child

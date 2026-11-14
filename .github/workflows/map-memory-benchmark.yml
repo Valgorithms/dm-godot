@@ -7,11 +7,15 @@ on:
       - '.github/workflows/map-memory-benchmark.yml'
       - 'tools/DmGodot.MapBenchmark/**'
       - 'scripts/benchmark_map_memory.py'
+      - 'src/DmGodot.Runtime/**'
+      - 'Directory.Build.props'
   pull_request:
     paths:
       - '.github/workflows/map-memory-benchmark.yml'
       - 'tools/DmGodot.MapBenchmark/**'
       - 'scripts/benchmark_map_memory.py'
+      - 'src/DmGodot.Runtime/**'
+      - 'Directory.Build.props'
 
 permissions:
   contents: read

@@ -451,10 +451,12 @@ tests.Add(("static map New roots preserve phase order, inherited callbacks and s
     Check(!runtime.MapCells.Any(c => ReferenceEquals(c.Area, unused)), "Default area was not unused.");
     var objects = runtime.MapCells.SelectMany(c => new[] { c.Area, c.Turf }.Concat(c.Entities)).Append(unused).Distinct().ToArray();
     Check(objects.All(o => o.Variables["new_count"].Number == 1), "New must run once per identity.");
+    Check(runtime.MapCells.SelectMany(c => c.Entities).All(o => o.Variables["forwarding_count"].Number == 2), "Forwarding New prefixes did not run.");
     Check(runtime.PendingThreads == roots.Length, "Sleeping constructors must remain independent roots.");
     runtime.AdvanceBy(1);
     Check(runtime.Logs.TakeLast(roots.Length).Select(l => l.Text).SequenceEqual(roots.Select(r => "wake-" + r)), "Sleeping New wake order changed.");
     Check(runtime.PendingThreads == 0, "Map constructor continuations leaked.");
+    Check(runtime.MapCells.SelectMany(c => c.Entities).All(o => o.Variables["forwarding_count"].Number == 4), "Forwarding New continuations did not resume.");
 }));
 tests.Add(("world executable initializer remains rejected", () => {
     var json = JsonNode.Parse(File.ReadAllText(mapNewPath))!;

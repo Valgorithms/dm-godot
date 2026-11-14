@@ -1,5 +1,5 @@
-"a" = (/obj/marker/child,/turf/tile,/area/region/a)
-"b" = (/obj/marker/child,/turf/tile,/area/region/b)
+"a" = (/obj/marker/child/grandchild,/turf/tile,/area/region/a)
+"b" = (/obj/marker/child/grandchild,/turf/tile,/area/region/b)
 
 (1,1,1) = {"
 ab

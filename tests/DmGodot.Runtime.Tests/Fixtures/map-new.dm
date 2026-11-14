@@ -44,6 +44,7 @@ var/area/unused_area
 
 /obj/marker
     var/new_count = 0
+    var/forwarding_count = 0
     New(location)
         ..()
         new_count += 1
@@ -54,6 +55,16 @@ var/area/unused_area
         world << "wake-obj-[x],[y]"
 
 /obj/marker/child
+    New(location)
+        forwarding_count += 1
+        ..(location)
+        forwarding_count += 1
+
+/obj/marker/child/grandchild
+    New(location)
+        forwarding_count += 1
+        ..(location)
+        forwarding_count += 1
 
 /world/New()
     world << "world"

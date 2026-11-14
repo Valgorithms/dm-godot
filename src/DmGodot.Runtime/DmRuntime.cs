@@ -300,6 +300,18 @@ public sealed class DmRuntime {
                         }
                         break;
                     }
+                    case DreamProcOpcode.DereferenceCall: {
+                        var name = Project.String(frame.Reader.Int());
+                        var args = Arguments(frame);
+                        if (frame.Pop().Value is not DmObject instance)
+                            throw new CompatibilityException($"Cannot call method '{name}' on a null or non-object receiver.");
+                        var proc = ResolveProc(instance.TypeId, name)
+                            ?? throw new CompatibilityException($"Type {instance.TypePath} has no procedure '{name}'.");
+                        if (proc.Bytecode is not { Length: > 0 } && !(proc.Name == "New" || proc.Name == "Del"))
+                            throw new CompatibilityException($"Native proc '{proc.Name}' is not implemented.");
+                        PushFrame(fiber, new Frame(proc, instance, args) { Usr = frame.Usr });
+                        break;
+                    }
                     case DreamProcOpcode.CreateObjectDirect: {
                         var typeId = frame.Reader.Int();
                         BeginConstruction(fiber, frame, typeId, Arguments(frame));

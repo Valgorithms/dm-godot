@@ -312,7 +312,7 @@ MapFailure("non-turf cell type rejected", j => j["Maps"]![0]!["CellDefinitions"]
 MapFailure("non-area cell type rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Area"]!["Type"] = TypeId(j, "/turf/floor"), "Map area must");
 MapFailure("non-movable mapped entity rejected", j => j["Maps"]![0]!["CellDefinitions"]!["c"]!["Objects"]![0]!["Type"] = TypeId(j, "/area/station"), "Map entity must");
 MapFailure("managed turf overrides are rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"] = new JsonObject { ["loc"] = null }, "Map turf override");
-MapFailure("default area executable initializer remains rejected", j => {
+MapFailure("malformed area initializer linkage is rejected", j => {
     foreach (var cell in j["Maps"]![0]!["CellDefinitions"]!.AsObject()) cell.Value!["Area"] = null;
     j["Types"]![TypeId(j, "/area")]!["InitProc"] = 1;
 }, "Area initializer");

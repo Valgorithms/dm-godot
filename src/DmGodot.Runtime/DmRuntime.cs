@@ -336,15 +336,18 @@ public sealed class DmRuntime {
                 case DreamProcOpcode.CreateList:
                     if (reader.Int() < 0) throw Fault(frame, offset, "Area initializer has an invalid list length.");
                     break;
+                case DreamProcOpcode.PushNFloats: case DreamProcOpcode.PushNStrings:
                 case DreamProcOpcode.CreateListNFloats: case DreamProcOpcode.CreateListNStrings: case DreamProcOpcode.CreateListNResources:
                     var count = reader.Int();
                     if (count < 0 || count > (reader.Length - reader.Position) / 4)
                         throw Fault(frame, offset, "Area initializer has an invalid literal list length.");
                     for (var i = 0; i < count; i++) {
-                        if (opcode == DreamProcOpcode.CreateListNFloats) reader.Float();
+                        if (opcode is DreamProcOpcode.CreateListNFloats or DreamProcOpcode.PushNFloats) reader.Float();
                         else Project.String(reader.Int());
                     }
                     break;
+                case DreamProcOpcode.PushStringFloat:
+                    Project.String(reader.Int()); reader.Float(); break;
                 case DreamProcOpcode.Call:
                     var reference = reader.Reference();
                     var kind = reader.Byte(); var argc = reader.Int();

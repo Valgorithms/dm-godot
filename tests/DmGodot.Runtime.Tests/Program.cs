@@ -223,6 +223,11 @@ Semantics("datum parent_type reflects inheritance", "test_datum_parent_type", ["
 SemanticFailure("datum vars view is explicit", "test_datum_vars_error", "datum.vars is not implemented");
 SemanticFailure("datum parent_type cannot be changed", "test_datum_parent_write_error", "Mutation of datum.parent_type");
 
+Semantics("child without own initializer inherits initialization once", "test_inherited_initializer",
+    ["inherited=1,3"], ["inherited=1,3"]);
+Semantics("detached outer New retains sleeping nested construction", "test_detached_nested_constructor",
+    ["new-start", "outer-returned=1"], ["new-start", "outer-returned=1", "new-end", "outer-done", "outer-later=12"]);
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

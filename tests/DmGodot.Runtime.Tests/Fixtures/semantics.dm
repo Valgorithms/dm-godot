@@ -212,3 +212,22 @@ var/init_count = 0
 /proc/test_datum_parent_write_error()
     var/datum/result = new /datum
     result.parent_type = /datum
+
+/datum/construction_parent/inherited_only
+
+/proc/test_inherited_initializer()
+    var/datum/construction_parent/inherited_only/result = new(3)
+    world << "inherited=[result.parent_value.value],[result.argument_value]"
+
+/datum/detached_nested_constructor
+    var/datum/sleeping_constructor/child
+    New()
+        set waitfor = 0
+        child = new /datum/sleeping_constructor(12)
+        world << "outer-done"
+
+/proc/test_detached_nested_constructor()
+    var/datum/detached_nested_constructor/result = new
+    world << "outer-returned=[result.child == null]"
+    sleep(1)
+    world << "outer-later=[result.child.value]"

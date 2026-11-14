@@ -24,6 +24,7 @@ public sealed class DmRuntime {
     private readonly List<MapEntity> _entities = [];
     private readonly List<MapCellObjects> _mapCells = [];
     private readonly Dictionary<DmObject, MapLocation> _mapLocations = [];
+    private readonly HashSet<DmObject> _multiLevelAreas = [];
     private sealed record MapLocation(int X, int Y, int Z, DmObject? Loc);
     // Native fields require appearance, containment or connection adapters, not raw compiler defaults.
     // Names are pinned to DMStandard/Types/Atoms at the supported compiler revision.
@@ -241,9 +242,13 @@ public sealed class DmRuntime {
             throw new CompatibilityException("Sparse map default filling is not implemented.");
         _tiles.AddRange(cells.Values.OrderBy(t => t.Z).ThenBy(t => t.Y).ThenBy(t => t.X));
         _mapCells.Sort((a, b) => (a.Z, a.Y, a.X).CompareTo((b.Z, b.Y, b.X)));
-        // Pinned area coordinates are the lowest turf by z, then y, then x.
-        foreach (var cell in _mapCells)
+        // Single-level area coordinates use lowest y, then x. Multi-level upstream
+        // coordinate caching is not a stable contract here, so reject those reads.
+        foreach (var cell in _mapCells) {
+            if (_mapLocations.TryGetValue(cell.Area, out var first) && first.Z != cell.Z)
+                _multiLevelAreas.Add(cell.Area);
             _mapLocations.TryAdd(cell.Area, new(cell.X, cell.Y, cell.Z, null));
+        }
     }
 
     private bool IsSubtypeOf(int typeId, string ancestorPath) {
@@ -518,6 +523,8 @@ public sealed class DmRuntime {
         }
         if (_mapLocations.TryGetValue(obj, out var location)) {
             if (UnsupportedMapField(obj, name)) throw new CompatibilityException($"Map atom.{name} is not implemented.");
+            if (_multiLevelAreas.Contains(obj) && name is ("x" or "y" or "z"))
+                throw new CompatibilityException("Coordinates for multi-level map areas are not implemented.");
             switch (name) {
                 case "x": return location.X;
                 case "y": return location.Y;

@@ -49,7 +49,9 @@ Enter/Exit, or collision callbacks. Static map New() overrides, map/world type
 initializers, sparse/overlapping maps, and map entity/area overrides are rejected
 rather than silently ignored. Areas are only checked for unsupported lifecycle
 code. Static loc links are readable (movable to turf, turf to area, area to null).
-Area coordinates use the lowest turf by z, y, then x. Native atom/appearance, movable and mob fields beyond loc/coordinates/type metadata
+Single-z area coordinates use the lowest turf by y, then x; coordinate reads on areas
+spanning multiple z levels fail explicitly because pinned upstream cross-z cache behavior
+needs separate parity investigation. Their identity and null loc remain available. Native atom/appearance, movable and mob fields beyond loc/coordinates/type metadata
 remain explicit errors, including contents, color, bounds and connection/vision fields.
 This avoids exposing unnormalized compiler defaults as runtime behavior. Mutation of
 those fields remains rejected so retained objects cannot silently diverge from snapshots.

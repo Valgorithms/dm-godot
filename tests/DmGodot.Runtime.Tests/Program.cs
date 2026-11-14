@@ -340,6 +340,26 @@ MapFieldFailure("test_map_output", "Map atom stringification is not implemented"
 
 MapFailure("empty area override prototypes are rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Area"]!["VarOverrides"] = new JsonObject(), "Map area variable overrides");
 
+tests.Add(("multi-level area identity survives while coordinates fail explicitly", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    var map = json["Maps"]![0]!;
+    map["MaxZ"] = 2;
+    var secondLevel = map["Blocks"]![0]!.DeepClone();
+    secondLevel["Z"] = 2;
+    map["Blocks"]!.AsArray().Add(secondLevel);
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    Check(runtime.MapCells.Count == 50, "Second map level missing.");
+    Check(runtime.MapCells.Select(c => c.Area).Distinct().Count() == 1, "Area identity must remain shared across levels.");
+    var cell = runtime.MapCells.Single(c => c.X == 3 && c.Y == 3 && c.Z == 2);
+    runtime.Boot(); runtime.AdvanceBy(2);
+    var start = runtime.Logs.Count;
+    runtime.InvokeGlobal("test_mapped_instance", new(cell.Entities.Single()), new(cell.Turf), new(cell.Area));
+    Check(runtime.Logs.Skip(start).Select(l => l.Text).SequenceEqual(new[] {
+        "links=1,1,1", "coordinates=3,3,2", "visits=1"
+    }), "Multilevel location links must remain readable.");
+    Throws(() => runtime.InvokeGlobal("test_map_coordinates", new DmValue(cell.Area)), "Coordinates for multi-level map areas");
+}));
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

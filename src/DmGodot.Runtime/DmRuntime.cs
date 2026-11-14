@@ -26,6 +26,8 @@ public sealed class DmRuntime {
     private readonly Dictionary<(int X, int Y, int Z), DmObject> _mapTurfs = [];
     private readonly Dictionary<DmObject, MapLocation> _mapLocations = [];
     private readonly HashSet<DmObject> _multiLevelAreas = [];
+    private readonly List<DmObject> _mapMovableNewOrder = [];
+    private DmObject? _defaultArea;
     private sealed record MapLocation(int X, int Y, int Z, DmObject? Loc);
     // Native fields require appearance, containment or connection adapters, not raw compiler defaults.
     // Names are pinned to DMStandard/Types/Atoms at the supported compiler revision.
@@ -94,9 +96,23 @@ public sealed class DmRuntime {
             Execute(fiber);
             if (fiber.Frames.Count > 0) throw new CompatibilityException("A yielding global initializer is not supported.");
         }
-        var newProc = ResolveProc(World.TypeId, "New");
-        if (newProc is not null) Enqueue(new Fiber(new Frame(newProc, World, [])), Time);
+        // Each callback is an independent root: execute its prefix now, but do not
+        // drain deferred work until all map callbacks and world.New have started.
+        var visitedAreas = new HashSet<DmObject>();
+        foreach (var cell in _mapCells)
+            if (visitedAreas.Add(cell.Area)) StartNew(cell.Area, []);
+        if (_defaultArea is not null && visitedAreas.Add(_defaultArea)) StartNew(_defaultArea, []);
+        foreach (var cell in _mapCells.OrderBy(c => c.Z).ThenByDescending(c => c.Y).ThenByDescending(c => c.X))
+            StartNew(cell.Turf, []);
+        foreach (var movable in _mapMovableNewOrder)
+            StartNew(movable, [new DmValue(_mapLocations[movable].Loc)]);
+        StartNew(World, []);
         AdvanceBy(0);
+    }
+
+    private void StartNew(DmObject instance, DmValue[] arguments) {
+        var proc = ResolveProc(instance.TypeId, "New");
+        if (proc is not null) Execute(new Fiber(new Frame(proc, instance, arguments)));
     }
 
     public void AdvanceBy(double deciseconds) {
@@ -193,11 +209,19 @@ public sealed class DmRuntime {
     private void LoadMaps() {
         var cells = new Dictionary<(int, int, int), WorldTile>();
         var areas = new Dictionary<int, DmObject>();
+        if ((Data.Maps ?? []).Any(map => map.MaxZ > 0)) {
+            var defaultAreaId = World.Variables.GetValueOrDefault("area").Value is DmTypeReference defaultAreaType
+                ? defaultAreaType.Id : throw new CompatibilityException("world.area must contain a type reference for default map filling.");
+            RequireMapType(defaultAreaId, "/area", "area");
+            _defaultArea = CreateInstance(defaultAreaId);
+            areas.Add(defaultAreaId, _defaultArea);
+        }
         foreach (var map in Data.Maps ?? []) {
             Width = Math.Max(Width, map.MaxX); Height = Math.Max(Height, map.MaxY); Levels = Math.Max(Levels, map.MaxZ);
             foreach (var block in map.Blocks) {
                 if (block.Width <= 0 || block.Height <= 0 || (long)block.Width * block.Height != block.Cells.Length)
                     throw new CompatibilityException("Malformed map block dimensions.");
+                var blockMovables = new List<(int X, int Y, DmObject Instance)>();
                 for (var i = 0; i < block.Cells.Length; i++) {
                     var x = block.X + i % block.Width;
                     var y = block.Y + block.Height - 1 - i / block.Width;
@@ -207,14 +231,14 @@ public sealed class DmRuntime {
                     var turfId = cell.Turf?.Type ?? (World.Variables.GetValueOrDefault("turf").Value is DmTypeReference defaultTurf
                         ? defaultTurf.Id : throw new CompatibilityException("world.turf must contain a type reference for default map filling."));
                     RequireMapType(turfId, "/turf", "turf");
-                    var turf = CreateStaticMapInstance(turfId);
+                    var turf = CreateInstance(turfId);
                     if (cell.Area?.VarOverrides is not null)
                         throw new CompatibilityException("Map area variable overrides are not implemented.");
                     var areaId = cell.Area?.Type ?? (World.Variables.GetValueOrDefault("area").Value is DmTypeReference defaultArea
                         ? defaultArea.Id : throw new CompatibilityException("world.area must contain a type reference for default map filling."));
                     RequireMapType(areaId, "/area", "area");
                     if (!areas.TryGetValue(areaId, out var area)) {
-                        area = CreateStaticMapInstance(areaId);
+                        area = CreateInstance(areaId);
                         areas.Add(areaId, area);
                     }
                     foreach (var (name, value) in cell.Turf?.VarOverrides ?? []) {
@@ -231,13 +255,15 @@ public sealed class DmRuntime {
                         RequireMapType(entity.Type, "/atom/movable", "entity");
                         if (entity.VarOverrides is { Count: > 0 })
                             throw new CompatibilityException("Map entity variable overrides are not implemented.");
-                        var instance = CreateStaticMapInstance(entity.Type);
+                        var instance = CreateInstance(entity.Type);
                         _mapLocations.Add(instance, new(x, y, block.Z, turf));
                         entities.Add(instance);
+                        blockMovables.Add((x, y, instance));
                         _entities.Add(new(x, y, block.Z, instance.TypePath));
                     }
                     _mapCells.Add(new(x, y, block.Z, turf, area, entities.AsReadOnly()));
                 }
+                _mapMovableNewOrder.AddRange(blockMovables.OrderBy(m => m.Y).ThenBy(m => m.X).Select(m => m.Instance));
             }
         }
         if ((long)Width * Height * Levels != cells.Count)
@@ -251,6 +277,7 @@ public sealed class DmRuntime {
                 _multiLevelAreas.Add(cell.Area);
             _mapLocations.TryAdd(cell.Area, new(cell.X, cell.Y, cell.Z, null));
         }
+        if (_defaultArea is not null) _mapLocations.TryAdd(_defaultArea, new(0, 0, 0, null));
     }
 
     private bool IsSubtypeOf(int typeId, string ancestorPath) {
@@ -262,20 +289,6 @@ public sealed class DmRuntime {
     private void RequireMapType(int typeId, string ancestorPath, string role) {
         if (!IsSubtypeOf(typeId, ancestorPath))
             throw new CompatibilityException($"Map {role} must be a subtype of {ancestorPath}.");
-    }
-
-    private DmObject CreateStaticMapInstance(int typeId) {
-        var instance = CreateInstance(typeId);
-        var constructor = ResolveProc(typeId, "New");
-        while (constructor?.Bytecode is { Length: > 0 } code) {
-            // Upstream /atom.New only forwards its arguments to the empty /datum.New.
-            // Recognize that exact no-effect chain, not arbitrary user constructors.
-            byte[] forwardOnly = [(byte)DreamProcOpcode.Call, 6, 4, 0, 0, 0, 0, (byte)DreamProcOpcode.Pop];
-            if (!code.AsSpan().SequenceEqual(forwardOnly))
-                throw new CompatibilityException($"Map New() lifecycle is not implemented: {instance.TypePath}.");
-            constructor = SuperProc(constructor);
-        }
-        return instance;
     }
 
     private bool IsOrdinaryDatumType(int typeId) {

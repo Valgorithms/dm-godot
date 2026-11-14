@@ -1,0 +1,7 @@
+"a" = (/obj/marker/child,/turf/tile,/area/region/a)
+"b" = (/obj/marker/child,/turf/tile,/area/region/b)
+
+(1,1,1) = {"
+ab
+ab
+"}

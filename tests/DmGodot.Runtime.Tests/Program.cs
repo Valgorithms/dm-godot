@@ -72,11 +72,11 @@ tests.Add(("null metadata is rejected cleanly", () => {
     json["Metadata"] = null;
     Throws(() => CompiledProject.Parse(json.ToJsonString()), "required metadata");
 }));
-tests.Add(("custom map constructors are rejected rather than skipped", () => {
+tests.Add(("executable map type initializers remain rejected", () => {
     var json = JsonNode.Parse(File.ReadAllText(path))!;
     var mappedType = json["Types"]!.AsArray().First(t => t!["Path"]!.GetValue<string>() == "/mob/player")!;
-    mappedType["Procs"] = new JsonArray(new JsonArray(JsonValue.Create(1)));
-    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Map New() lifecycle");
+    mappedType["InitProc"] = 1;
+    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers");
 }));
 tests.Add(("direct unknown native procedure invocation fails explicitly", () => {
     var runtime = new DmRuntime(CompiledProject.Load(path)); runtime.Boot();
@@ -312,10 +312,10 @@ MapFailure("non-turf cell type rejected", j => j["Maps"]![0]!["CellDefinitions"]
 MapFailure("non-area cell type rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Area"]!["Type"] = TypeId(j, "/turf/floor"), "Map area must");
 MapFailure("non-movable mapped entity rejected", j => j["Maps"]![0]!["CellDefinitions"]!["c"]!["Objects"]![0]!["Type"] = TypeId(j, "/area/station"), "Map entity must");
 MapFailure("managed turf overrides are rejected", j => j["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"] = new JsonObject { ["loc"] = null }, "Map turf override");
-MapFailure("default area custom lifecycle remains rejected", j => {
+MapFailure("default area executable initializer remains rejected", j => {
     foreach (var cell in j["Maps"]![0]!["CellDefinitions"]!.AsObject()) cell.Value!["Area"] = null;
-    j["Types"]![TypeId(j, "/area")]!["Procs"] = new JsonArray(new JsonArray(JsonValue.Create(1)));
-}, "Map New() lifecycle");
+    j["Types"]![TypeId(j, "/area")]!["InitProc"] = 1;
+}, "Type initializers");
 void MapFieldFailure(string proc, string error) {
     tests.Add((error, () => {
         var runtime = new DmRuntime(CompiledProject.Load(path));
@@ -436,6 +436,73 @@ tests.Add(("unsupported coordinate casts produce source diagnostics", () => {
             Check(ex.Message.Contains("world.dm:"), "Missing DM source location.");
         }
     }
+}));
+
+var mapNewPath = args.Length > 3 ? args[3] : "build/map-new.json";
+tests.Add(("static map New roots preserve phase order, inherited callbacks and suspension", () => {
+    var runtime = new DmRuntime(CompiledProject.Load(mapNewPath));
+    runtime.Boot();
+    var roots = new[] { "area-a", "area-b", "area-unused", "turf-2,2", "turf-1,2", "turf-2,1", "turf-1,1",
+        "obj-1,1", "obj-2,1", "obj-1,2", "obj-2,2", "world" };
+    var prefixes = roots.Select(r => r.StartsWith("area-") ? r + ":1:1" : r.StartsWith("obj-") ? r + ":1" : r);
+    Check(runtime.Logs.Select(l => l.Text).SequenceEqual(new[] { "global" }.Concat(prefixes).Concat(roots.Select(r => "spawn-" + r))),
+        "Map callback prefixes/order or zero-delay scheduling changed: " + string.Join("|", runtime.Logs.Select(l => l.Text)));
+    var unused = (DmObject)runtime.GetGlobal("unused_area").Value!;
+    Check(!runtime.MapCells.Any(c => ReferenceEquals(c.Area, unused)), "Default area was not unused.");
+    Check(new[] { "unused_x", "unused_y", "unused_z" }.All(n => runtime.GetGlobal(n).Number == 0), "Unused area coordinates must be zero.");
+    var objects = runtime.MapCells.SelectMany(c => new[] { c.Area, c.Turf }.Concat(c.Entities)).Append(unused).Distinct().ToArray();
+    Check(objects.All(o => o.Variables["new_count"].Number == 1), "New must run once per identity.");
+    Check(runtime.MapCells.SelectMany(c => c.Entities).All(o => o.Variables["forwarding_count"].Number == 2), "Forwarding New prefixes did not run.");
+    Check(runtime.PendingThreads == roots.Length, "Sleeping constructors must remain independent roots.");
+    runtime.AdvanceBy(1);
+    Check(runtime.Logs.TakeLast(roots.Length).Select(l => l.Text).SequenceEqual(roots.Select(r => "wake-" + r)), "Sleeping New wake order changed.");
+    Check(runtime.PendingThreads == 0, "Map constructor continuations leaked.");
+    Check(runtime.MapCells.SelectMany(c => c.Entities).All(o => o.Variables["forwarding_count"].Number == 4), "Forwarding New continuations did not resume.");
+}));
+tests.Add(("world executable initializer remains rejected", () => {
+    var json = JsonNode.Parse(File.ReadAllText(mapNewPath))!;
+    json["Types"]![TypeId(json, "/world")]!["InitProc"] = 1;
+    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers");
+}));
+
+tests.Add(("default area shares explicit identity and is skipped without levels", () => {
+    var json = JsonNode.Parse(File.ReadAllText(mapNewPath))!;
+    foreach (var definition in json["Maps"]![0]!["CellDefinitions"]!.AsObject())
+        definition.Value!["Area"]!["Type"] = TypeId(json, "/area/region/unused");
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    runtime.Boot();
+    var area = runtime.GetGlobal("unused_area").Value;
+    Check(runtime.MapCells.All(c => ReferenceEquals(c.Area, area)), "Explicit default area must share its retained identity.");
+    Check(runtime.Logs.Count(l => l.Text == "area-unused:1:1") == 1, "Default area callback duplicated.");
+    json["Maps"] = new JsonArray();
+    var empty = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    empty.Boot();
+    Check(empty.GetGlobal("unused_area").IsNull, "Zero levels must not allocate a default area.");
+    Check(empty.Logs.Select(l => l.Text).SequenceEqual(new[] { "global", "world", "spawn-world" }), "Empty map lifecycle changed.");
+}));
+
+tests.Add(("map New separates spatial turf order from block and cell object order", () => {
+    var json = JsonNode.Parse(File.ReadAllText(mapNewPath))!;
+    var map = json["Maps"]![0]!;
+    foreach (var definition in map["CellDefinitions"]!.AsObject()) {
+        var objects = definition.Value!["Objects"]!.AsArray();
+        objects.Add(objects[0]!.DeepClone());
+    }
+    var first = map["Blocks"]![0]!.DeepClone();
+    first["Z"] = 2;
+    var second = map["Blocks"]![0]!.DeepClone();
+    map["Blocks"] = new JsonArray(first, second); // construction order intentionally opposite z order
+    map["MaxZ"] = 2;
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    runtime.Boot();
+    var ordered = runtime.MapCells.OrderByDescending(c => c.Z).ThenBy(c => c.Y).ThenBy(c => c.X).SelectMany(c => c.Entities).ToArray();
+    Check(ordered.Select(o => o.Variables["new_order"].Number).SequenceEqual(Enumerable.Range(1, 16).Select(i => (float)i)),
+        "Movables must retain block order, bottom-up rows and cell object order.");
+    var turfs = runtime.MapCells.OrderBy(c => c.Z).ThenByDescending(c => c.Y).ThenByDescending(c => c.X).Select(c => c.Turf);
+    Check(turfs.Select(o => o.Variables["new_order"].Number).SequenceEqual(Enumerable.Range(1, 8).Select(i => (float)i)),
+        "Turf callbacks must use reverse XY per ascending z.");
+    runtime.AdvanceBy(1);
+    Check(ordered.All(o => o.Variables["forwarding_count"].Number == 4), "Multi-block constructor continuations did not complete.");
 }));
 
 var failed = 0;

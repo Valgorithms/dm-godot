@@ -19,6 +19,12 @@ revision and opcode hash are checked separately by the build tooling and loader.
   null. Non-finite numbers and truncated values outside the signed 32-bit integer
   range raise source-located compatibility errors; host overflow casts are unsupported.
   Type/tag/container `locate()` and native contents views remain unsupported.
+- Starts static map `New()` callbacks after nonyielding global initialization: unique
+  grid areas in ascending z/y/x order, then an unused default area, turfs in ascending z
+  and descending y/x order, then movables in map/block order with bottom-up rows and
+  ascending x (cell object order retained), then `world.New()`. Each is an independent
+  root executed to its first yield; deferred work drains only after every root starts.
+  Movable constructors receive their turf as argument 1 with `loc` already set.
 - Executes `world.New()` and global/instance procedure calls using explicit call
   frames. Numeric values use `float`, matching the currently targeted DM model.
 - Allocates ordinary datums with inherited type initialization and `New()` on explicit
@@ -51,10 +57,12 @@ fixture/testing entry point, not a complete BYOND verb dispatch implementation.
 
 This is **not a complete BYOND world runtime**. Static map objects now retain identity;
 the host's initial avatar/movement protocol does not execute DM Login, Move,
-Enter/Exit, or collision callbacks. Static map New() overrides, map/world type
+Enter/Exit, or collision callbacks. Executable map/world type
 initializers, sparse/overlapping maps, and map entity/area overrides are rejected
-rather than silently ignored. Areas are only checked for unsupported lifecycle
-code. Static loc links are readable (movable to turf, turf to area, area to null).
+rather than silently ignored. Static identities are eagerly allocated before New;
+contents/type enumeration and dynamic atom creation remain unavailable, so this
+slice does not claim general construction timing parity. The default area is retained
+and receives New even when no cell uses it, provided the map has at least one z level. Static loc links are readable (movable to turf, turf to area, area to null).
 Single-z area coordinates use the lowest turf by y, then x; coordinate reads on areas
 spanning multiple z levels fail explicitly because pinned upstream cross-z cache behavior
 needs separate parity investigation. Their identity and null loc remain available. Native atom/appearance, movable and mob fields beyond loc/coordinates/type metadata
@@ -90,7 +98,8 @@ From the repository root:
 python3 scripts/compile.py fixtures/smoke/smoke.dme --output build/smoke.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/semantics.dme --output build/semantics.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/semantics.dme --output build/semantics-optimized.json --optimize
-dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/map-new.dme --output build/map-new.json
+dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json
 ```
 
 Tests exercise code emitted by the real compiler, scheduler interactions, map

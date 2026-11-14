@@ -308,6 +308,18 @@ public sealed class DmRuntime {
                         frame.Push(result.ToString()); break;
                     }
                     case DreamProcOpcode.CreateList: { var list = new DmList(); list.Values.AddRange(frame.PopMany(frame.Reader.Int())); frame.Push(new(list)); break; }
+                    case DreamProcOpcode.CreateListNFloats: case DreamProcOpcode.CreateListNStrings:
+                    case DreamProcOpcode.CreateListNResources: case DreamProcOpcode.CreateListNRefs: {
+                        var count = frame.Reader.Int();
+                        var list = new DmList();
+                        for (var i = 0; i < count; i++) list.Values.Add(opcode switch {
+                            DreamProcOpcode.CreateListNFloats => new(frame.Reader.Float()),
+                            DreamProcOpcode.CreateListNStrings => new(Project.String(frame.Reader.Int())),
+                            DreamProcOpcode.CreateListNResources => new(new DmResource(Project.String(frame.Reader.Int()))),
+                            _ => Get(frame, frame.Reader.Reference())
+                        });
+                        frame.Push(new(list)); break;
+                    }
                     case DreamProcOpcode.DereferenceIndex: { var index = frame.Pop(); var list = frame.Pop().Value as DmList ?? throw new CompatibilityException("Only list indexing is implemented."); frame.Push(list.Get(index)); break; }
                     case DreamProcOpcode.DereferenceField: { var name = Project.String(frame.Reader.Int()); frame.Push(Field(frame.Pop(), name)); break; }
                     case DreamProcOpcode.PushRefAndDereferenceField: { var value = Get(frame, frame.Reader.Reference()); frame.Push(Field(value, Project.String(frame.Reader.Int()))); break; }

@@ -163,6 +163,12 @@ SemanticFailure("world.tick_usage placeholder is rejected", "test_world_tick_usa
 SemanticFailure("world.contents placeholder is rejected", "test_world_contents", "world.contents is not implemented");
 SemanticFailure("world.realtime placeholder is rejected", "test_world_realtime", "world.realtime is not implemented");
 
+Semantics("optimized literal lists preserve order and duplicates", "test_literal_lists",
+    ["numbers=3:3,1,3", "strings=3:third,first,third", "resources=2:semantics.dm,semantics.dme"],
+    ["numbers=3:3,1,3", "strings=3:third,first,third", "resources=2:semantics.dm,semantics.dme"]);
+Semantics("optimized reference lists preserve shared identity", "test_reference_lists",
+    ["references=2:7,7", "shared=9,9"], ["references=2:7,7", "shared=9,9"]);
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

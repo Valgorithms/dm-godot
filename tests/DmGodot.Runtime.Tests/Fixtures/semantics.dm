@@ -76,3 +76,21 @@
 
 /proc/test_world_realtime()
     world << world.realtime
+
+/proc/test_literal_lists()
+    var/list/numbers = list(3, 1, 3)
+    var/list/strings = list("third", "first", "third")
+    var/list/resources = list('semantics.dm', 'semantics.dme')
+    world << "numbers=[numbers.len]:[numbers[1]],[numbers[2]],[numbers[3]]"
+    world << "strings=[strings.len]:[strings[1]],[strings[2]],[strings[3]]"
+    world << "resources=[resources.len]:[resources[1]],[resources[2]]"
+
+/proc/test_reference_lists()
+    var/list/shared = list(1)
+    var/list/values = list(shared, shared)
+    shared[1] = 7
+    var/list/first = values[1]
+    var/list/second = values[2]
+    world << "references=[values.len]:[first[1]],[second[1]]"
+    first[1] = 9
+    world << "shared=[shared[1]],[second[1]]"

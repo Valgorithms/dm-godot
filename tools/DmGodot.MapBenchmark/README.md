@@ -23,7 +23,7 @@ Working set is sampled after collection and validation; peak working set covers 
 entire process, including warmup, parsing and measurement. Neither is peak managed
 heap size. Small measurement overhead and runtime/JIT effects remain; the warmup
 does not establish steady-state performance. Results include exact engine revision,
-compiler compatibility revision, environment, case identity and artifact SHA-256.
+compiler compatibility revision, environment including GC mode and processor count, case identity and artifact SHA-256.
 
 Each child has a 2 GiB GC heap cap and 60-second supervisor timeout. The standard
 GitHub runner job is bounded to 15 minutes. Failures stop further samples and retain
@@ -32,7 +32,8 @@ provenance and repeat hashes; there are no timing or memory regression threshold
 
 After building the pinned dependency and this project in Release, run:
 python scripts/benchmark_map_memory.py
-Results are written in a fresh run directory under build/map-memory-benchmark,
-so partial reruns cannot mix with old samples. The separate workflow also
+Results are written under build/map-memory-benchmark. A nonempty output directory
+is refused; archive prior evidence before a manual rerun or use a fresh checkout.
+This prevents partial reruns from mixing with old samples. The separate workflow also
 runs small real-process checks before the matrix. No runtime or compatibility
 probe behavior is changed.

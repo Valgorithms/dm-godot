@@ -2,11 +2,12 @@
 import copy
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
-from benchmark_map_memory import aggregate, run_sample, CASES
+from benchmark_map_memory import aggregate, run_sample, prepare_output, CASES
 
 REVISION = "0" * 40  # Test identity only; workflow supervisor records actual git HEAD.
 
@@ -27,11 +28,22 @@ class BenchmarkTests(unittest.TestCase):
             self.assertGreater(sample["construction_process_managed_allocated_bytes"], 0)
             self.assertGreater(sample["gc_total_available_memory_bytes"], 0)
             self.assertGreater(sample["process_peak_working_set_bytes"], 0)
+            self.assertIsInstance(sample["gc_server"], bool)
+            self.assertTrue(sample["gc_latency_mode"])
+            self.assertGreater(sample["processor_count"], 0)
             self.assertEqual(sample["retained_managed_delta_bytes_after_forced_gc"],
                              sample["managed_bytes_after_construction_after_forced_gc"] -
                              sample["managed_bytes_before_construction_after_forced_gc"])
         self.assertEqual(first["artifact_sha256"], repeated["artifact_sha256"])
         self.assertNotEqual(first["artifact_sha256"], fields["artifact_sha256"])
+
+    def test_nonempty_evidence_directory_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = prepare_output(Path(temporary) / "evidence")
+            (output / "sample.json").write_text("old evidence")
+            with self.assertRaises(ValueError):
+                prepare_output(output)
+            self.assertEqual((output / "sample.json").read_text(), "old evidence")
 
     def test_real_invalid_case_fails(self):
         sample = run_sample(129, 0, 1, REVISION)
@@ -46,6 +58,7 @@ class BenchmarkTests(unittest.TestCase):
         samples = [dict(status="completed", side=s, extra_inherited_fields=f, repetition=r,
                         engine_revision=REVISION, compiler_revision="pin", dotnet="test", os="test",
                         architecture="test", configured_gc_heap_hard_limit="cap", bytecode_version="v",
+                        gc_server=False, gc_latency_mode="test", processor_count=2,
                         artifact_sha256=f"{s}-{f}", construction_elapsed_ms=r,
                         construction_process_managed_allocated_bytes=r,
                         retained_managed_delta_bytes_after_forced_gc=-r) for s, f, r in CASES]
@@ -59,6 +72,9 @@ class BenchmarkTests(unittest.TestCase):
         mismatch = copy.deepcopy(samples)
         mismatch[0]["artifact_sha256"] = "different"
         variants.append(mismatch)
+        environment = copy.deepcopy(samples)
+        environment[0]["gc_server"] = True
+        variants.append(environment)
         for variant in variants:
             with self.assertRaises(ValueError):
                 aggregate(variant)

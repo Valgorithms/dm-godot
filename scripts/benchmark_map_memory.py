@@ -8,7 +8,6 @@ from pathlib import Path
 import statistics
 import subprocess
 import sys
-import tempfile
 
 from bootstrap_opendream import find_dotnet
 
@@ -58,7 +57,7 @@ def aggregate(samples):
     if any(s.get("status") != "completed" for s in samples):
         raise ValueError("Failed samples cannot produce a successful aggregate")
     for field in ("engine_revision", "compiler_revision", "dotnet", "os", "architecture",
-                  "configured_gc_heap_hard_limit", "bytecode_version"):
+                  "configured_gc_heap_hard_limit", "bytecode_version", "gc_server", "gc_latency_mode", "processor_count"):
         if len({s[field] for s in samples}) != 1:
             raise ValueError(f"Inconsistent provenance: {field}")
     groups = []
@@ -78,10 +77,15 @@ def aggregate(samples):
             "engine_revision": samples[0]["engine_revision"], "groups": groups}
 
 
-def main():
-    output = ROOT / "build/map-memory-benchmark"
+def prepare_output(output):
     output.mkdir(parents=True, exist_ok=True)
-    output = Path(tempfile.mkdtemp(prefix="run-", dir=output))
+    if any(output.iterdir()):
+        raise ValueError(f"Refusing nonempty evidence directory: {output}; use a fresh checkout or archive the old directory")
+    return output
+
+
+def main():
+    output = prepare_output(ROOT / "build/map-memory-benchmark")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     samples = []
     for side, fields, rep in CASES:

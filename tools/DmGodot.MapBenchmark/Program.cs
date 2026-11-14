@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -30,6 +31,9 @@ try {
     report["dotnet"] = RuntimeInformation.FrameworkDescription;
     report["os"] = RuntimeInformation.OSDescription;
     report["architecture"] = RuntimeInformation.ProcessArchitecture.ToString();
+    report["gc_server"] = GCSettings.IsServerGC;
+    report["gc_latency_mode"] = GCSettings.LatencyMode.ToString();
+    report["processor_count"] = Environment.ProcessorCount;
     report["configured_gc_heap_hard_limit"] = Environment.GetEnvironmentVariable("DOTNET_GCHeapHardLimit");
     report["gc_total_available_memory_bytes"] = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
     Console.WriteLine(JsonSerializer.Serialize(report));

@@ -1,0 +1,11 @@
+"a" = (/turf/named { name = "mapped <b>name</b>"; marker = 7 },/area)
+"b" = (/turf/named { name = null },/area)
+"c" = (/turf/named { name = 42 },/area)
+"d" = (/turf/named,/area)
+"e" = (/turf/named { name = "" },/area)
+"f" = (/turf/named { name = /turf/named },/area)
+"g" = (/turf/named { name = 'turf-name.dm' },/area)
+
+(1,1,1) = {"
+aabcdefg
+"}

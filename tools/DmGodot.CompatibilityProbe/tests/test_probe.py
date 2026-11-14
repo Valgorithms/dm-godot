@@ -1,10 +1,12 @@
 """Real-process checks for probe phases and supervisor failure handling."""
 import base64
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -63,10 +65,15 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(report["instruction_budget"], 100000)
 
     def test_boot_return_does_not_claim_quiescence(self):
-        report = self.run_artifact(self.smoke)
+        with patch.dict(os.environ, {"DOTNET_GCHeapHardLimit": "0x10000000"}):
+            report = self.run_artifact(self.smoke)
         self.assertEqual((report["measurement_status"], report["runtime_status"], report["phase"]),
                          ("completed", "boot_returned", "boot"))
         self.assertGreater(report["pending_threads"], 0)
+        self.assertEqual(report["configured_gc_heap_hard_limit"], "0x10000000")
+        self.assertIsNone(report["memory_measurement_error"])
+        for key in ("gc_total_available_memory_bytes", "managed_memory_bytes", "working_set_bytes", "peak_working_set_bytes"):
+            self.assertGreater(report[key], 0, key)
 
     def test_child_hash_must_match_compilation_provenance(self):
         report = self.run_artifact(self.smoke, expected_digest="0" * 64)

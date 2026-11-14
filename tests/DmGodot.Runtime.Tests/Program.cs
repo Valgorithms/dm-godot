@@ -543,6 +543,57 @@ foreach (var unsafeType in new[] { "/area/unsafe_helper", "/area/unsafe_sleep", 
         }
     }));
 
+var turfNamePath = args.Length > 6 ? args[6] : "build/turf-name.json";
+tests.Add(("turf overrides preserve raw definitions and normalize native names before New", () => {
+    var project = CompiledProject.Load(turfNamePath);
+    var runtime = new DmRuntime(project);
+    runtime.Boot();
+    Check(runtime.Logs.Select(l => l.Text).SequenceEqual(new[] {
+        "8::3", "7::3", "6::3", "5:type-name:3", "4::3", "3::3",
+        "2:mapped <b>name</b>:7", "1:mapped <b>name</b>:7"
+    }), "Turf New saw incorrect normalized name or override value.");
+    var cells = runtime.MapCells;
+    Check(cells[2].Turf.Variables["name"].IsNull && cells[3].Turf.Variables["name"].Number == 42,
+        "Native normalization destroyed raw null/numeric override values.");
+    Check(cells[6].Turf.Variables["name"].Value is DmTypeReference && cells[7].Turf.Variables["name"].Value is DmResource,
+        "Raw type/resource override values were dropped.");
+    Check(!ReferenceEquals(cells[0].Turf, cells[1].Turf), "Repeated map prototype shared a turf.");
+    runtime.InvokeGlobal("test_turf_override_isolation");
+    Check(runtime.Logs.Last().Text == "markers=99,7", "Per-cell user override state leaked.");
+    var second = new DmRuntime(project);
+    second.Boot();
+    Check(second.Logs.TakeLast(2).All(l => l.Text.EndsWith(":7")), "A runtime mutated shared project definition defaults.");
+    Check(second.MapCells[4].Turf.Variables["name"].ToString() == "type-name", "Inherited type default was overwritten.");
+}));
+foreach (var (proc, error) in new[] {
+    ("test_turf_name_write", "Mutation of map atom.name"),
+    ("test_turf_name_output", "Map atom stringification")
+}) tests.Add(($"{proc} remains unsupported", () => {
+    var runtime = new DmRuntime(CompiledProject.Load(turfNamePath)); runtime.Boot();
+    Throws(() => runtime.InvokeGlobal(proc), error);
+}));
+foreach (var field in new[] { "unknown_field", "tag", "type", "parent_type", "vars", "loc", "alpha" })
+    tests.Add(($"turf override rejects {field}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
+        json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"] = new JsonObject { [field] = "bad" };
+        Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Map turf override");
+    }));
+foreach (var kind in new[] { 2, 3 })
+    tests.Add(($"turf name rejects unsupported compiler tag {kind}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
+        json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"] = new JsonObject {
+            ["name"] = kind == 3 ? new JsonObject { ["type"] = 3, ["values"] = new JsonArray() } : new JsonObject { ["type"] = kind, ["value"] = 0 }
+        };
+        Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Compiler value kind");
+    }));
+
+tests.Add(("turf overrides do not bypass inherited executable initialization rejection", () => {
+    var json = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
+    json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["Type"] = TypeId(json, "/turf/initialized_child");
+    json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"] = new JsonObject { ["name"] = "override" };
+    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers are not implemented: /turf/initialized_base");
+}));
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

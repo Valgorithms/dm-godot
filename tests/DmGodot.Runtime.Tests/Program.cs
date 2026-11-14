@@ -181,7 +181,7 @@ tests.Add(("pinned optimizer emits all four list constructor instructions", () =
     }) {
         var definition = json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == proc)!;
         var code = Convert.FromBase64String(definition["Bytecode"]!.GetValue<string>());
-        Check(code.Length > 0 && code[0] == (byte)opcode, $"Expected {proc} to start with {opcode}.");
+        Check(code.Length > 0 && code[0] == (byte)opcode, $"Expected {proc} to start with {opcode}; bytecode={Convert.ToHexString(code)}.");
     }
 }));
 

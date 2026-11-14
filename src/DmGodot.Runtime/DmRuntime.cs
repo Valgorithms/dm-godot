@@ -213,9 +213,7 @@ public sealed class DmRuntime {
         return instance;
     }
 
-    private void BeginConstruction(Fiber fiber, Frame caller, int typeId, DmValue[] args) {
-        if (typeId < 0 || typeId >= Data.Types.Length) throw new CompatibilityException("Invalid construction type ID.");
-        // Native managed types need their own allocation, containment and lifecycle adapters.
+    private bool IsOrdinaryDatumType(int typeId) {
         var datum = false;
         for (int? current = typeId; current is not null; current = Data.Types[current.Value].Parent) {
             var path = Data.Types[current.Value].Path;
@@ -224,9 +222,20 @@ public sealed class DmRuntime {
                 "/matrix" or "/regex" or "/filter" or "/sound" or "/image" or "/mutable_appearance" or
                 "/generator" or "/particles" or "/database" or "/database/query" or
                 "/vector" or "/callee" or "/exception" or "/alist")
-                throw new CompatibilityException($"Construction of native/atom type {Data.Types[typeId].Path} is not implemented.");
+                return false;
         }
-        if (!datum) throw new CompatibilityException("Only ordinary datum construction is implemented.");
+        return datum;
+    }
+    private bool CanExecuteEmpty(Procedure proc) {
+        // The pinned JSON has no native flag. Its native registry has no custom
+        // ordinary-datum owners; inherited stubs retain their built-in owner.
+        return proc.Name is "New" or "Del" ||
+            (Data.Types[proc.OwningTypeId].Path != "/datum" && IsOrdinaryDatumType(proc.OwningTypeId));
+    }
+    private void BeginConstruction(Fiber fiber, Frame caller, int typeId, DmValue[] args) {
+        if (typeId < 0 || typeId >= Data.Types.Length) throw new CompatibilityException("Invalid construction type ID.");
+        if (!IsOrdinaryDatumType(typeId))
+            throw new CompatibilityException($"Construction of native/atom type {Data.Types[typeId].Path} is not implemented.");
         var instance = CreateInstance(typeId, initializeLater: true);
         PushFrame(fiber, new Frame(caller.Proc, instance, args) {
             Usr = caller.Usr, Construction = new(instance, ResolveInitializer(typeId), ResolveProc(typeId, "New"))
@@ -293,11 +302,23 @@ public sealed class DmRuntime {
                             if (!float.IsFinite(delay)) throw new CompatibilityException("Non-finite sleep delay.");
                             if (Suspend(fiber, Math.Max(0, delay))) return;
                         } else {
-                            if (proc.Bytecode is not { Length: > 0 } && !(proc.Name == "New" || proc.Name == "Del"))
+                            if (proc.Bytecode is not { Length: > 0 } && !CanExecuteEmpty(proc))
                                 throw new CompatibilityException($"Native proc '{proc.Name}' is not implemented.");
                             if (fiber.Frames.Count >= 512) throw new CompatibilityException("Procedure call depth limit exceeded.");
                             fiber.Frames.Add(new Frame(proc, src, args) { Usr = frame.Usr });
                         }
+                        break;
+                    }
+                    case DreamProcOpcode.DereferenceCall: {
+                        var name = Project.String(frame.Reader.Int());
+                        var args = Arguments(frame);
+                        if (frame.Pop().Value is not DmObject instance)
+                            throw new CompatibilityException($"Cannot call method '{name}' on a null or non-object receiver.");
+                        var proc = ResolveProc(instance.TypeId, name)
+                            ?? throw new CompatibilityException($"Type {instance.TypePath} has no procedure '{name}'.");
+                        if (proc.Bytecode is not { Length: > 0 } && !CanExecuteEmpty(proc))
+                            throw new CompatibilityException($"Native proc '{proc.Name}' is not implemented.");
+                        PushFrame(fiber, new Frame(proc, instance, args) { Usr = frame.Usr });
                         break;
                     }
                     case DreamProcOpcode.CreateObjectDirect: {

@@ -231,3 +231,97 @@ var/init_count = 0
     world << "outer-returned=[result.child == null]"
     sleep(1)
     world << "outer-later=[result.child.value]"
+
+/datum/method_parent
+    var/value = 0
+    proc/compute(a, b)
+        value = a * 10 + b
+        return value
+    proc/identity()
+        return src
+    proc/user_context()
+        return usr
+    proc/relay(datum/method_parent/target)
+        return target.compute(2, 3)
+    proc/sleeping(a)
+        world << "method-start=[value]"
+        sleep(1)
+        value = a
+        world << "method-end=[value]"
+        return value
+    proc/detached(a)
+        set waitfor = 0
+        world << "method-detached-start"
+        sleep(1)
+        value = a
+        world << "method-detached-end=[value]"
+
+/datum/method_parent/child
+    compute(a, b)
+        return ..() + 100
+
+/proc/test_instance_dispatch()
+    var/datum/method_parent/first = new /datum/method_parent/child
+    var/datum/method_parent/second = new
+    world << "override=[first.compute(4, 5)]"
+    world << "relay=[first.relay(second)]"
+    world << "receivers=[first.value],[second.value]"
+    world << "identity=[first.identity() == first],[second.identity() == second]"
+    world << "usr=[first.user_context() == null]"
+
+/proc/test_sleeping_method()
+    var/datum/method_parent/target = new
+    world << "method-result=[target.sleeping(6)]"
+    world << "method-caller=[target.value]"
+
+/proc/test_detached_method()
+    var/datum/method_parent/target = new
+    target.detached(9)
+    world << "method-caller=[target.value]"
+    sleep(1)
+    world << "method-later=[target.value]"
+
+/proc/test_null_method()
+    var/datum/method_parent/target
+    target.compute(1, 2)
+
+/proc/test_missing_method()
+    var/datum/target = new
+    target:missing_method()
+
+/proc/test_native_method()
+    world.Profile()
+
+/datum/method_recursive
+    proc/recurse()
+        return src.recurse()
+
+/proc/test_method_depth()
+    var/datum/method_recursive/target = new
+    target.recurse()
+
+/proc/test_nonobject_method()
+    var/target = 7
+    target:compute(1, 2)
+
+/proc/test_named_method_error()
+    var/datum/method_parent/target = new
+    target.compute(b = 2, a = 1)
+
+/datum/empty_method_owner
+    proc/noop()
+    proc/self_noop()
+        return noop()
+
+/datum/empty_method_owner/child
+    noop()
+        return ..()
+
+/proc/test_empty_methods()
+    var/datum/empty_method_owner/target = new
+    var/datum/empty_method_owner/child/child = new
+    world << "empty=[target.noop() == null],[target.self_noop() == null],[child.noop() == null]"
+
+/proc/test_inherited_native_method()
+    var/datum/empty_method_owner/target = new
+    target.Read(null)

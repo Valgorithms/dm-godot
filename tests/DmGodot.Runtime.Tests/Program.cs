@@ -228,6 +228,27 @@ Semantics("child without own initializer inherits initialization once", "test_in
 Semantics("detached outer New retains sleeping nested construction", "test_detached_nested_constructor",
     ["new-start", "outer-returned=1"], ["new-start", "outer-returned=1", "new-end", "outer-done", "outer-later=12"]);
 
+Semantics("instance calls dispatch by receiver and preserve argument order", "test_instance_dispatch",
+    ["override=145", "relay=23", "receivers=45,23", "identity=1,1", "usr=1"],
+    ["override=145", "relay=23", "receivers=45,23", "identity=1,1", "usr=1"]);
+Semantics("sleeping method retains receiver and caller continuation", "test_sleeping_method",
+    ["method-start=0"], ["method-start=0", "method-end=6", "method-result=6", "method-caller=6"]);
+Semantics("detached method retains receiver after returning to caller", "test_detached_method",
+    ["method-detached-start", "method-caller=0"],
+    ["method-detached-start", "method-caller=0", "method-detached-end=9", "method-later=9"]);
+SemanticFailure("null method receiver is explicit", "test_null_method", "null or non-object receiver");
+SemanticFailure("missing instance method is explicit", "test_missing_method", "no procedure");
+SemanticFailure("native instance method remains explicit", "test_native_method", "Native proc");
+SemanticFailure("method failures retain source location", "test_null_method", "semantics.dm:");
+SemanticFailure("recursive instance methods are bounded", "test_method_depth", "call depth limit");
+
+SemanticFailure("non-object method receiver is explicit", "test_nonobject_method", "null or non-object receiver");
+SemanticFailure("named method arguments remain explicit", "test_named_method_error", "argument mode");
+
+Semantics("empty user datum methods return null through instance, self and super calls", "test_empty_methods",
+    ["empty=1,1,1"], ["empty=1,1,1"]);
+SemanticFailure("inherited native stub is not treated as empty user method", "test_inherited_native_method", "Native proc");
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

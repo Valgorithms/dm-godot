@@ -16,6 +16,10 @@ revision and opcode hash are checked separately by the build tooling and loader.
   constructor results are discarded and creation returns the allocated object. Normal
   sleeping constructors suspend their caller; `waitfor=0` constructors detach at yield.
   Direct and type-reference creation support positional arguments.
+- Dispatches positional instance-method calls against the receiver\'s actual type,
+  preserving receiver `src`, inherited `usr`, overrides/super calls and cooperative
+  suspension. Missing/null/non-object/native calls fail explicitly. Dynamic `call()`,
+  named arguments, `arglist` and safe-navigation instructions remain outside this slice.
 - Implements nested `sleep()`, `spawn()` with copied local bindings and shared
   list/object references, and `set waitfor = 0` detachment on actual suspension.
 - Provides deterministic virtual decisecond time; equal-time continuations are
@@ -72,3 +76,8 @@ dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/seman
 
 Tests exercise code emitted by the real compiler, scheduler interactions, map
 coordinates, source diagnostics, malformed artifacts, and bounded execution.
+
+Empty methods owned by ordinary user datum types return null. The pinned compiler
+JSON has no native flag, so empty built-in-owner and global procedures remain
+explicit compatibility errors (apart from the existing New/Del defaults). This
+uses the pinned native registry's absence of custom ordinary-datum native owners.

@@ -1,0 +1,52 @@
+name: Synthetic map memory baseline
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/map-memory-benchmark.yml'
+      - 'tools/DmGodot.MapBenchmark/**'
+      - 'scripts/benchmark_map_memory.py'
+      - 'src/DmGodot.Runtime/**'
+      - 'Directory.Build.props'
+  pull_request:
+    paths:
+      - '.github/workflows/map-memory-benchmark.yml'
+      - 'tools/DmGodot.MapBenchmark/**'
+      - 'scripts/benchmark_map_memory.py'
+      - 'src/DmGodot.Runtime/**'
+      - 'Directory.Build.props'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.404
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch pinned compiler dependency
+        run: python scripts/bootstrap_opendream.py
+      - name: Build isolated benchmark
+        run: dotnet build tools/DmGodot.MapBenchmark/DmGodot.MapBenchmark.csproj -c Release --nologo -m:1 -p:UseSharedCompilation=false
+      - name: Verify real subprocess measurements and completeness guards
+        run: python -m unittest discover -s tools/DmGodot.MapBenchmark/tests -p 'test_*.py' -v
+      - name: Measure 27 synthetic construction samples
+        run: python scripts/benchmark_map_memory.py
+      - name: Preserve complete or partial raw measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-map-memory-baseline
+          path: build/map-memory-benchmark
+          retention-days: 14
+          if-no-files-found: warn

@@ -449,6 +449,7 @@ tests.Add(("static map New roots preserve phase order, inherited callbacks and s
         "Map callback prefixes/order or zero-delay scheduling changed: " + string.Join("|", runtime.Logs.Select(l => l.Text)));
     var unused = (DmObject)runtime.GetGlobal("unused_area").Value!;
     Check(!runtime.MapCells.Any(c => ReferenceEquals(c.Area, unused)), "Default area was not unused.");
+    Check(new[] { "unused_x", "unused_y", "unused_z" }.All(n => runtime.GetGlobal(n).Number == 0), "Unused area coordinates must be zero.");
     var objects = runtime.MapCells.SelectMany(c => new[] { c.Area, c.Turf }.Concat(c.Entities)).Append(unused).Distinct().ToArray();
     Check(objects.All(o => o.Variables["new_count"].Number == 1), "New must run once per identity.");
     Check(runtime.MapCells.SelectMany(c => c.Entities).All(o => o.Variables["forwarding_count"].Number == 2), "Forwarding New prefixes did not run.");
@@ -478,6 +479,30 @@ tests.Add(("default area shares explicit identity and is skipped without levels"
     empty.Boot();
     Check(empty.GetGlobal("unused_area").IsNull, "Zero levels must not allocate a default area.");
     Check(empty.Logs.Select(l => l.Text).SequenceEqual(new[] { "global", "world", "spawn-world" }), "Empty map lifecycle changed.");
+}));
+
+tests.Add(("map New separates spatial turf order from block and cell object order", () => {
+    var json = JsonNode.Parse(File.ReadAllText(mapNewPath))!;
+    var map = json["Maps"]![0]!;
+    foreach (var definition in map["CellDefinitions"]!.AsObject()) {
+        var objects = definition.Value!["Objects"]!.AsArray();
+        objects.Add(objects[0]!.DeepClone());
+    }
+    var first = map["Blocks"]![0]!.DeepClone();
+    first["Z"] = 2;
+    var second = map["Blocks"]![0]!.DeepClone();
+    map["Blocks"] = new JsonArray(first, second); // construction order intentionally opposite z order
+    map["MaxZ"] = 2;
+    var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+    runtime.Boot();
+    var ordered = runtime.MapCells.OrderByDescending(c => c.Z).ThenBy(c => c.Y).ThenBy(c => c.X).SelectMany(c => c.Entities).ToArray();
+    Check(ordered.Select(o => o.Variables["new_order"].Number).SequenceEqual(Enumerable.Range(1, 16).Select(i => (float)i)),
+        "Movables must retain block order, bottom-up rows and cell object order.");
+    var turfs = runtime.MapCells.OrderBy(c => c.Z).ThenByDescending(c => c.Y).ThenByDescending(c => c.X).Select(c => c.Turf);
+    Check(turfs.Select(o => o.Variables["new_order"].Number).SequenceEqual(Enumerable.Range(1, 8).Select(i => (float)i)),
+        "Turf callbacks must use reverse XY per ascending z.");
+    runtime.AdvanceBy(1);
+    Check(ordered.All(o => o.Variables["forwarding_count"].Number == 4), "Multi-block constructor continuations did not complete.");
 }));
 
 var failed = 0;

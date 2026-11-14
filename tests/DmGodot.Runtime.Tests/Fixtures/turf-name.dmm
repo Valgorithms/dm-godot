@@ -1,10 +1,10 @@
-"a" = (/turf/named { name = "mapped <b>name</b>"; marker = 7 },/area)
-"b" = (/turf/named { name = null },/area)
-"c" = (/turf/named { name = 42 },/area)
+"a" = (/turf/named { name = "mapped <b>name</b>"; marker = 7; layer = 4.75 },/area)
+"b" = (/turf/named { name = null; layer = null },/area)
+"c" = (/turf/named { name = 42; layer = -1 },/area)
 "d" = (/turf/named,/area)
-"e" = (/turf/named { name = "" },/area)
-"f" = (/turf/named { name = /turf/named },/area)
-"g" = (/turf/named { name = 'turf-name.dm' },/area)
+"e" = (/turf/named { name = ""; layer = "8" },/area)
+"f" = (/turf/named { name = /turf/named; layer = /turf/named },/area)
+"g" = (/turf/named { name = 'turf-name.dm'; layer = 'turf-name.dm' },/area)
 
 (1,1,1) = {"
 aabcdefg

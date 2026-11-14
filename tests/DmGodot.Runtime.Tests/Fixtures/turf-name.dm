@@ -1,11 +1,14 @@
 /turf/base
     name = "type-name"
+    layer = 2.5
+    var/layer_seen
     var/marker = 3
 
 /turf/named
     parent_type = /turf/base
     New()
         world << "[x]:[name]:[marker]"
+        layer_seen = layer
 
 /proc/test_turf_override_isolation()
     var/turf/base/a = locate(1,1,1)
@@ -26,3 +29,15 @@
 
 /turf/initialized_child
     parent_type = /turf/initialized_base
+
+/proc/test_turf_layer_write()
+    var/turf/base/a = locate(1,1,1)
+    a.layer = 4
+
+/proc/test_area_layer_read()
+    var/turf/a = locate(1,1,1)
+    var/area/region = a.loc
+    world << region.layer
+
+/proc/test_movable_layer_read(mob/item)
+    world << item.layer

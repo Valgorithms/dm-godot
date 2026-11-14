@@ -14,7 +14,9 @@ revision and opcode hash are checked separately by the build tooling and loader.
   DM reads of `loc` and coordinates use retained metadata, and instance methods can
   retain ordinary user-variable state. Diagnostic records remain separate snapshots.
 - Applies per-cell turf overrides after inherited constant defaults, preserving separate
-  instance values and immutable project definitions. Turf `name` accepts supported raw
+  instance values and immutable project definitions. The supported order is inherited
+  constants, map overrides, then New; executable turf initializers remain rejected,
+  including inherited ones. This does not implement general override/init/retype phases. Turf `name` accepts supported raw
   compiler values; DM `.name` reads preserve strings (including empty/formatting text)
   and normalize nonstrings to empty, matching the pinned native setter. Raw values stay
   intact. Name writes and object stringification remain unsupported. Unknown override

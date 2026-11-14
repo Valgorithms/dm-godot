@@ -582,10 +582,17 @@ foreach (var kind in new[] { 2, 3 })
     tests.Add(($"turf name rejects unsupported compiler tag {kind}", () => {
         var json = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
         json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"] = new JsonObject {
-            ["name"] = new JsonObject { ["type"] = kind, ["value"] = 0 }
+            ["name"] = kind == 3 ? new JsonObject { ["type"] = 3, ["values"] = new JsonArray() } : new JsonObject { ["type"] = kind, ["value"] = 0 }
         };
         Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Compiler value kind");
     }));
+
+tests.Add(("turf overrides do not bypass inherited executable initialization rejection", () => {
+    var json = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
+    json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["Type"] = TypeId(json, "/turf/initialized_child");
+    json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"] = new JsonObject { ["name"] = "override" };
+    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers are not implemented: /turf/initialized_base");
+}));
 
 var failed = 0;
 foreach (var (name, run) in tests) {

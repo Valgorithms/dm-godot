@@ -20,3 +20,9 @@
 /proc/test_turf_name_output()
     var/turf/base/a = locate(1,1,1)
     world << a
+
+/turf/initialized_base
+    var/list/state = list()
+
+/turf/initialized_child
+    parent_type = /turf/initialized_base

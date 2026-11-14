@@ -1,0 +1,13 @@
+vendor/
+build/
+**/bin/
+**/obj/
+**/__pycache__/
+client/.godot/
+client/*.uid
+artifacts/*
+!artifacts/.gitkeep
+*.user
+*.log
+.tools/
+

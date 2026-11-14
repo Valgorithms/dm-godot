@@ -217,6 +217,8 @@ SemanticFailure("native atom allocation remains explicit", "test_native_creation
 SemanticFailure("construction errors retain DM source", "test_native_creation_error", "semantics.dm:");
 SemanticFailure("recursive constructors have bounded frames", "test_constructor_depth", "call depth limit");
 
+SemanticFailure("native datum allocation remains explicit", "test_native_datum_error", "native/atom type");
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

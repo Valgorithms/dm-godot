@@ -220,7 +220,8 @@ public sealed class DmRuntime {
             if (path == "/datum") datum = true;
             if (path is "/atom" or "/world" or "/client" or "/list" or "/savefile" or "/icon" or
                 "/matrix" or "/regex" or "/filter" or "/sound" or "/image" or "/mutable_appearance" or
-                "/generator" or "/particles" or "/database" or "/database/query")
+                "/generator" or "/particles" or "/database" or "/database/query" or
+                "/vector" or "/callee" or "/exception" or "/alist")
                 throw new CompatibilityException($"Construction of native/atom type {Data.Types[typeId].Path} is not implemented.");
         }
         if (!datum) throw new CompatibilityException("Only ordinary datum construction is implemented.");

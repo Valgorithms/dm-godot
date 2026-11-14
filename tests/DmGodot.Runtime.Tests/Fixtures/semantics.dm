@@ -112,8 +112,13 @@ var/init_count = 0
     init_count += 1
     return init_count
 
+/datum/init_marker
+    var/value
+    New()
+        value = count_initializer()
+
 /datum/construction_parent
-    var/parent_value = count_initializer()
+    var/datum/init_marker/parent_value = new /datum/init_marker
     var/list/values = list(1)
     var/argument_value = 0
     New(value)
@@ -121,7 +126,7 @@ var/init_count = 0
         return 99
 
 /datum/construction_parent/child
-    var/child_value = count_initializer()
+    var/datum/init_marker/child_value = new /datum/init_marker
     New(value)
         ..(value + 1)
         return 123
@@ -130,7 +135,7 @@ var/init_count = 0
     var/datum/construction_parent/child/first = new(4)
     var/datum/construction_parent/child/second = new(8)
     first.values[1] = 7
-    world << "init=[first.parent_value],[first.child_value],[second.parent_value],[second.child_value]"
+    world << "init=[first.parent_value.value],[first.child_value.value],[second.parent_value.value],[second.child_value.value]"
     world << "args=[first.argument_value],[second.argument_value]"
     world << "lists=[first.values[1]],[second.values[1]]"
     world << "distinct=[first != second]"
@@ -192,3 +197,6 @@ var/init_count = 0
 
 /proc/test_constructor_depth()
     new /datum/recursive_constructor
+
+/proc/test_native_datum_error()
+    new /exception

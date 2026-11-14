@@ -299,3 +299,11 @@ var/init_count = 0
 /proc/test_method_depth()
     var/datum/method_recursive/target = new
     target.recurse()
+
+/proc/test_nonobject_method()
+    var/target = 7
+    target:compute(1, 2)
+
+/proc/test_named_method_error()
+    var/datum/method_parent/target = new
+    target.compute(b = 2, a = 1)

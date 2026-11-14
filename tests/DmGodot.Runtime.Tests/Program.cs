@@ -242,6 +242,9 @@ SemanticFailure("native instance method remains explicit", "test_native_method",
 SemanticFailure("method failures retain source location", "test_null_method", "semantics.dm:");
 SemanticFailure("recursive instance methods are bounded", "test_method_depth", "call depth limit");
 
+SemanticFailure("non-object method receiver is explicit", "test_nonobject_method", "null or non-object receiver");
+SemanticFailure("named method arguments remain explicit", "test_named_method_error", "argument mode");
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

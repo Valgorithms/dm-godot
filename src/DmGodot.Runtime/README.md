@@ -13,6 +13,13 @@ revision and opcode hash are checked separately by the build tooling and loader.
   prototypes of the same type share an area object. `MapCells` exposes these identities.
   DM reads of `loc` and coordinates use retained metadata, and instance methods can
   retain ordinary user-variable state. Diagnostic records remain separate snapshots.
+- Applies per-cell turf overrides after inherited constant defaults, preserving separate
+  instance values and immutable project definitions. Turf `name` accepts supported raw
+  compiler values; DM `.name` reads preserve strings (including empty/formatting text)
+  and normalize nonstrings to empty, matching the pinned native setter. Raw values stay
+  intact. Name writes and object stringification remain unsupported. Unknown override
+  fields fail explicitly (upstream ignores them); metadata/tag/native fields other than
+  the existing density/color diagnostic inputs and name remain rejected.
 - Implements coordinate `locate(x, y, z)` using the retained turf index. Repeated
   lookups return the same object. Finite numbers truncate toward zero before bounds
   checking; non-numbers coerce to zero, and invalid/out-of-bounds coordinates return
@@ -74,7 +81,8 @@ and receives New even when no cell uses it, provided the map has at least one z 
 Single-z area coordinates use the lowest turf by y, then x; coordinate reads on areas
 spanning multiple z levels fail explicitly because pinned upstream cross-z cache behavior
 needs separate parity investigation. Their identity and null loc remain available. Native atom/appearance, movable and mob fields beyond loc/coordinates/type metadata
-remain explicit errors, including contents, color, bounds and connection/vision fields.
+remain explicit errors, except static turf name reads; this includes contents, color,
+bounds and connection/vision fields.
 This avoids exposing unnormalized compiler defaults as runtime behavior. Mutation of
 those fields remains rejected so retained objects cannot silently diverge from snapshots.
 Direct mapped-object output also fails until native name/stringification is implemented.
@@ -109,7 +117,8 @@ python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/semantics.dme --
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/map-new.dme --output build/map-new.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/area-init.dme --output build/area-init.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/area-init.dme --output build/area-init-optimized.json --optimize
-dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json build/area-init.json build/area-init-optimized.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/turf-name.dme --output build/turf-name.json
+dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json build/area-init.json build/area-init-optimized.json build/turf-name.json
 ```
 
 Tests exercise code emitted by the real compiler, scheduler interactions, map

@@ -234,7 +234,7 @@ public sealed class DmRuntime {
                     var turfId = cell.Turf?.Type ?? (World.Variables.GetValueOrDefault("turf").Value is DmTypeReference defaultTurf
                         ? defaultTurf.Id : throw new CompatibilityException("world.turf must contain a type reference for default map filling."));
                     RequireMapType(turfId, "/turf", "turf");
-                    var turf = CreateInstance(turfId);
+                    var turf = CreateMapTurf(turfId, cell.Turf?.VarOverrides);
                     if (cell.Area?.VarOverrides is not null)
                         throw new CompatibilityException("Map area variable overrides are not implemented.");
                     var areaId = cell.Area?.Type ?? (World.Variables.GetValueOrDefault("area").Value is DmTypeReference defaultArea
@@ -243,11 +243,6 @@ public sealed class DmRuntime {
                     if (!areas.TryGetValue(areaId, out var area)) {
                         area = CreateMapArea(areaId);
                         areas.Add(areaId, area);
-                    }
-                    foreach (var (name, value) in cell.Turf?.VarOverrides ?? []) {
-                        if ((ProtectedMapField(turf, name) && name is not ("density" or "color")) || name is "type" or "parent_type" or "vars")
-                            throw new CompatibilityException($"Map turf override '{name}' is not implemented.");
-                        turf.Variables[name] = ConvertValue(value);
                     }
                     if (cells.ContainsKey((x, y, block.Z))) throw new CompatibilityException("Overlapping map blocks are not implemented.");
                     cells[(x, y, block.Z)] = new(x, y, block.Z, turf.Variables.GetValueOrDefault("density").IsTruthy, turf.TypePath, turf.Variables.GetValueOrDefault("color").Value as string);
@@ -281,6 +276,21 @@ public sealed class DmRuntime {
             _mapLocations.TryAdd(cell.Area, new(cell.X, cell.Y, cell.Z, null));
         }
         if (_defaultArea is not null) _mapLocations.TryAdd(_defaultArea, new(0, 0, 0, null));
+    }
+
+    private DmObject CreateMapTurf(int typeId, Dictionary<string, JsonElement>? overrides) {
+        // Definition defaults first, then per-cell raw overrides. Executable turf
+        // initializers remain rejected by CreateInstance; no late writes emulate them.
+        var turf = CreateInstance(typeId);
+        foreach (var (name, value) in overrides ?? []) {
+            if (!turf.Variables.ContainsKey(name))
+                throw new CompatibilityException($"Map turf override '{name}' names an unknown variable.");
+            if ((ProtectedMapField(turf, name) && name is not ("density" or "color" or "name")) ||
+                name is "type" or "parent_type" or "vars" or "tag")
+                throw new CompatibilityException($"Map turf override '{name}' is not implemented.");
+            turf.Variables[name] = ConvertValue(value);
+        }
+        return turf;
     }
 
     private bool IsSubtypeOf(int typeId, string ancestorPath) {
@@ -626,6 +636,10 @@ public sealed class DmRuntime {
             if (name == "time") return (float)Time;
         }
         if (_mapLocations.TryGetValue(obj, out var location)) {
+            // The pinned appearance setter retains strings and normalizes every
+            // nonstring name to empty. Keep raw definition values untouched.
+            if (name == "name" && IsSubtypeOf(obj.TypeId, "/turf"))
+                return obj.Variables.GetValueOrDefault("name").Value as string ?? "";
             if (UnsupportedMapField(obj, name)) throw new CompatibilityException($"Map atom.{name} is not implemented.");
             if (_multiLevelAreas.Contains(obj) && name is ("x" or "y" or "z"))
                 throw new CompatibilityException("Coordinates for multi-level map areas are not implemented.");

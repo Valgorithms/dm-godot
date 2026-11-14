@@ -105,13 +105,13 @@ public sealed class DmRuntime {
         var id = Array.FindIndex(Data.Types, t => t.Path == path);
         return id >= 0 ? id : throw new CompatibilityException($"Required type {path} is absent.");
     }
-    private DmObject CreateInstance(int id) {
+    private DmObject CreateInstance(int id, bool initializeLater = false) {
         if (id < 0 || id >= Data.Types.Length) throw new CompatibilityException($"Invalid type ID {id}.");
         var result = new DmObject(id, Data.Types[id].Path);
         var chain = new Stack<TypeDefinition>();
         for (int? current = id; current is not null; current = Data.Types[current.Value].Parent) chain.Push(Data.Types[current.Value]);
         foreach (var type in chain) {
-            if (type.InitProc is int init && Data.Procs[init].Bytecode is { Length: > 0 })
+            if (!initializeLater && type.InitProc is int init && Data.Procs[init].Bytecode is { Length: > 0 })
                 throw new CompatibilityException($"Type initializers are not implemented: {type.Path}.");
             foreach (var (name, value) in type.Variables ?? []) result.Variables[name] = ConvertValue(value);
         }
@@ -144,8 +144,15 @@ public sealed class DmRuntime {
                     if (Data.Procs[chain[i]].Name == name) return Data.Procs[chain[i]];
         return null;
     }
+    private Procedure? ResolveInitializer(int typeId) {
+        for (int? current = typeId; current is not null; current = Data.Types[current.Value].Parent)
+            if (Data.Types[current.Value].InitProc is int init) return Data.Procs[init];
+        return null;
+    }
     private Procedure? SuperProc(Procedure proc) {
         var owningType = Data.Types[proc.OwningTypeId];
+        if (owningType.InitProc is int init && ReferenceEquals(Data.Procs[init], proc))
+            return owningType.Parent is int ancestor ? ResolveInitializer(ancestor) : null;
         foreach (var chain in owningType.Procs ?? []) {
             var index = Array.FindIndex(chain, id => ReferenceEquals(Data.Procs[id], proc));
             if (index > 0) return Data.Procs[chain[index - 1]];
@@ -204,12 +211,46 @@ public sealed class DmRuntime {
         return instance;
     }
 
+    private void BeginConstruction(Fiber fiber, Frame caller, int typeId, DmValue[] args) {
+        if (typeId < 0 || typeId >= Data.Types.Length) throw new CompatibilityException("Invalid construction type ID.");
+        // Native managed types need their own allocation, containment and lifecycle adapters.
+        var datum = false;
+        for (int? current = typeId; current is not null; current = Data.Types[current.Value].Parent) {
+            var path = Data.Types[current.Value].Path;
+            if (path == "/datum") datum = true;
+            if (path is "/atom" or "/world" or "/client" or "/list" or "/savefile" or "/icon" or
+                "/matrix" or "/regex" or "/filter" or "/sound" or "/image" or "/mutable_appearance" or
+                "/generator" or "/particles" or "/database" or "/database/query")
+                throw new CompatibilityException($"Construction of native/atom type {Data.Types[typeId].Path} is not implemented.");
+        }
+        if (!datum) throw new CompatibilityException("Only ordinary datum construction is implemented.");
+        var instance = CreateInstance(typeId, initializeLater: true);
+        PushFrame(fiber, new Frame(caller.Proc, instance, args) {
+            Usr = caller.Usr, Construction = new(instance, ResolveInitializer(typeId), ResolveProc(typeId, "New"))
+        });
+    }
+    private static void PushFrame(Fiber fiber, Frame frame) {
+        if (fiber.Frames.Count >= 512) throw new CompatibilityException("Procedure call depth limit exceeded.");
+        fiber.Frames.Add(frame);
+    }
     private void Execute(Fiber fiber) {
         while (fiber.Frames.Count > 0) {
             var frame = fiber.Frames[^1];
             var offset = frame.Reader.Position;
             if (--_budget < 0) throw Fault(frame, offset, "Instruction budget exhausted; possible non-yielding loop.");
             try {
+                if (frame.Construction is { } construction) {
+                    Procedure? next = construction.Stage++ switch {
+                        0 => construction.Initializer,
+                        1 => construction.Constructor,
+                        _ => null
+                    };
+                    if (construction.Stage > 2) { Return(fiber, new(construction.Instance)); continue; }
+                    if (next is not null)
+                        PushFrame(fiber, new Frame(next, construction.Instance,
+                            construction.Stage == 1 ? [] : frame.Arguments) { Usr = frame.Usr });
+                    continue;
+                }
                 if (offset == frame.Reader.Length) { Return(fiber, frame.Result); continue; }
                 var opcode = (DreamProcOpcode)frame.Reader.Byte();
                 switch (opcode) {
@@ -254,6 +295,20 @@ public sealed class DmRuntime {
                             if (fiber.Frames.Count >= 512) throw new CompatibilityException("Procedure call depth limit exceeded.");
                             fiber.Frames.Add(new Frame(proc, src, args) { Usr = frame.Usr });
                         }
+                        break;
+                    }
+                    case DreamProcOpcode.CreateObjectDirect: {
+                        var typeId = frame.Reader.Int();
+                        BeginConstruction(fiber, frame, typeId, Arguments(frame));
+                        break;
+                    }
+                    case DreamProcOpcode.CreateObject: {
+                        var mode = frame.Reader.Byte(); var count = frame.Reader.Int();
+                        var type = frame.Pop(); var overrides = frame.Pop();
+                        if (!overrides.IsNull) throw new CompatibilityException("Construction variable overrides are not implemented.");
+                        if (type.Value is not DmTypeReference reference)
+                            throw new CompatibilityException("Dynamic construction requires a type reference.");
+                        BeginConstruction(fiber, frame, reference.Id, Arguments(frame, mode, count));
                         break;
                     }
                     case DreamProcOpcode.Spawn: {
@@ -361,6 +416,9 @@ public sealed class DmRuntime {
     }
     private DmValue[] Arguments(Frame frame) {
         var kind = frame.Reader.Byte(); var count = frame.Reader.Int();
+        return Arguments(frame, kind, count);
+    }
+    private static DmValue[] Arguments(Frame frame, byte kind, int count) {
         return kind switch {
             0 when count == 0 => [], 1 => frame.PopMany(count), 4 when count == 0 => [.. frame.Arguments],
             _ => throw new CompatibilityException($"Call argument mode {kind} is not implemented.")
@@ -405,16 +463,16 @@ public sealed class DmRuntime {
     }
     private static void Return(Fiber fiber, DmValue value) {
         fiber.Frames.RemoveAt(fiber.Frames.Count - 1);
-        if (fiber.Frames.Count > 0) fiber.Frames[^1].Push(value);
+        if (fiber.Frames.Count > 0 && fiber.Frames[^1].Construction is null) fiber.Frames[^1].Push(value);
     }
     // set waitfor=0 only detaches once execution actually yields, preserving synchronous work before sleep.
     private bool Suspend(Fiber fiber, double delay) {
-        var split = fiber.Frames.FindLastIndex(f => (f.Proc.Attributes & 32) != 0);
+        var split = fiber.Frames.FindLastIndex(f => f.Construction is null && (f.Proc.Attributes & 32) != 0);
         if (split > 0) {
             var continuation = new Fiber(); continuation.Frames.AddRange(fiber.Frames.Skip(split));
             var result = fiber.Frames[split].Result;
             fiber.Frames.RemoveRange(split, fiber.Frames.Count - split);
-            fiber.Frames[^1].Push(result);
+            if (fiber.Frames[^1].Construction is null) fiber.Frames[^1].Push(result);
             Enqueue(continuation, Time + delay);
             return false;
         }
@@ -428,7 +486,14 @@ public sealed class DmRuntime {
         public Fiber() { }
         public Fiber(Frame frame) { Frames.Add(frame); }
     }
+    private sealed class Construction(DmObject instance, Procedure? initializer, Procedure? constructor) {
+        public DmObject Instance { get; } = instance;
+        public Procedure? Initializer { get; } = initializer;
+        public Procedure? Constructor { get; } = constructor;
+        public int Stage;
+    }
     private sealed class Frame {
+        public Construction? Construction;
         public Procedure Proc { get; }
         public ByteReader Reader { get; }
         public DmObject? Src { get; }

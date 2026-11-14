@@ -245,6 +245,10 @@ SemanticFailure("recursive instance methods are bounded", "test_method_depth", "
 SemanticFailure("non-object method receiver is explicit", "test_nonobject_method", "null or non-object receiver");
 SemanticFailure("named method arguments remain explicit", "test_named_method_error", "argument mode");
 
+Semantics("empty user datum methods return null through instance, self and super calls", "test_empty_methods",
+    ["empty=1,1,1"], ["empty=1,1,1"]);
+SemanticFailure("inherited native stub is not treated as empty user method", "test_inherited_native_method", "Native proc");
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

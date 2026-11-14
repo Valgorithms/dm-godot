@@ -76,3 +76,8 @@ dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/seman
 
 Tests exercise code emitted by the real compiler, scheduler interactions, map
 coordinates, source diagnostics, malformed artifacts, and bounded execution.
+
+Empty methods owned by ordinary user datum types return null. The pinned compiler
+JSON has no native flag, so empty built-in-owner and global procedures remain
+explicit compatibility errors (apart from the existing New/Del defaults). This
+uses the pinned native registry's absence of custom ordinary-datum native owners.

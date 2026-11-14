@@ -307,3 +307,21 @@ var/init_count = 0
 /proc/test_named_method_error()
     var/datum/method_parent/target = new
     target.compute(b = 2, a = 1)
+
+/datum/empty_method_owner
+    proc/noop()
+    proc/self_noop()
+        return noop()
+
+/datum/empty_method_owner/child
+    noop()
+        return ..()
+
+/proc/test_empty_methods()
+    var/datum/empty_method_owner/target = new
+    var/datum/empty_method_owner/child/child = new
+    world << "empty=[target.noop() == null],[target.self_noop() == null],[child.noop() == null]"
+
+/proc/test_inherited_native_method()
+    var/datum/empty_method_owner/target = new
+    target.Read(null)

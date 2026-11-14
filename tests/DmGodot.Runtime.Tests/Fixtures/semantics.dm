@@ -200,3 +200,15 @@ var/init_count = 0
 
 /proc/test_native_datum_error()
     new /exception
+
+/proc/test_datum_parent_type()
+    var/datum/construction_parent/child/result = new(0)
+    world << "parent=[result.parent_type == /datum/construction_parent]"
+
+/proc/test_datum_vars_error()
+    var/datum/result = new /datum
+    world << result.vars
+
+/proc/test_datum_parent_write_error()
+    var/datum/result = new /datum
+    result.parent_type = /datum

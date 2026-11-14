@@ -219,6 +219,10 @@ SemanticFailure("recursive constructors have bounded frames", "test_constructor_
 
 SemanticFailure("native datum allocation remains explicit", "test_native_datum_error", "native/atom type");
 
+Semantics("datum parent_type reflects inheritance", "test_datum_parent_type", ["parent=1"], ["parent=1"]);
+SemanticFailure("datum vars view is explicit", "test_datum_vars_error", "datum.vars is not implemented");
+SemanticFailure("datum parent_type cannot be changed", "test_datum_parent_write_error", "Mutation of datum.parent_type");
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

@@ -116,6 +116,8 @@ public sealed class DmRuntime {
             foreach (var (name, value) in type.Variables ?? []) result.Variables[name] = ConvertValue(value);
         }
         result.Variables["type"] = new(new DmTypeReference(id, result.TypePath));
+        result.Variables["parent_type"] = Data.Types[id].Parent is int parent
+            ? new(new DmTypeReference(parent, Data.Types[parent].Path)) : DmValue.Null;
         return result;
     }
     private DmValue ConvertValue(JsonElement value) => value.ValueKind switch {
@@ -433,6 +435,7 @@ public sealed class DmRuntime {
                 throw new CompatibilityException($"world.{name} is not implemented.");
             if (name == "time") return (float)Time;
         }
+        if (name == "vars") throw new CompatibilityException("datum.vars is not implemented.");
         return obj.Variables.TryGetValue(name, out var value) ? value : throw new CompatibilityException($"Unknown field '{name}'.");
     }
     private DmValue Get(Frame frame, Reference reference) => reference.Kind switch {
@@ -460,6 +463,8 @@ public sealed class DmRuntime {
     private void SetField(DmValue owner, string name, DmValue value) {
         if (owner.Value is not DmObject obj || !obj.Variables.ContainsKey(name)) throw new CompatibilityException($"Cannot assign field '{name}'.");
         if (ReferenceEquals(obj, World) && BuiltinWorldFields.Contains(name)) throw new CompatibilityException($"Mutation of world.{name} is not implemented.");
+        if (name is "type" or "parent_type" or "vars")
+            throw new CompatibilityException($"Mutation of datum.{name} is not implemented.");
         obj.Variables[name] = value;
     }
     private static void Return(Fiber fiber, DmValue value) {

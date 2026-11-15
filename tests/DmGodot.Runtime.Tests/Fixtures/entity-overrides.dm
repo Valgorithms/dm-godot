@@ -38,6 +38,10 @@ world
         name_seen = name
         state_seen = icon_state
 
+/obj/null_name/leaf_thing
+/obj/base/child/reset_name
+    name = null
+
 /obj/bad_init
     name = list("forbidden")
 /obj/bad_state_init

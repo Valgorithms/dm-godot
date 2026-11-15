@@ -4,6 +4,9 @@
 "d" = (/obj/base/child/replaced{items = 0},/turf/plain,/area/plain)
 "e" = (/obj/null_name,/turf/plain,/area/plain)
 
+"f" = (/obj/null_name/leaf_thing,/turf/plain,/area/plain)
+"g" = (/obj/base/child/reset_name,/turf/plain,/area/plain)
+
 (1,1,1) = {"
-abcde
+abcdefg
 "}

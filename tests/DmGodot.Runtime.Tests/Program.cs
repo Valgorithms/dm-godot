@@ -974,6 +974,8 @@ foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath
         Check(fresh.MapCells[2].Entities[0].Variables["scalar"].Number == 1 && fresh.MapCells[0].Entities[0].Variables["items"].Number == 42,
             "Runtime mutated shared project/cache defaults.");
         Check(objects[4].Variables["name_seen"].ToString() == "null name", "Null type name fallback must use the final type name.");
+        Check(objects[5].Variables["name_seen"].ToString() == "leaf thing" && objects[6].Variables["name_seen"].ToString() == "reset name",
+            "Inherited raw-null or explicit child-null names must use the child leaf, not a parent's normalized name.");
     }));
     tests.Add(($"movable appearance reads normalize supported raw values independently: {artifact}", () => {
         var original = JsonNode.Parse(File.ReadAllText(artifact))!;
@@ -1025,7 +1027,7 @@ foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath
         }));
     foreach (var (proc, message) in new[] {
         ("write_name", "Mutation of map atom.name"), ("write_state", "Mutation of map atom.icon_state"),
-        ("output_object", "Map atom stringification"), ("interpolate_object", "Map atom stringification"),
+        ("output_object", "Map atom stringification"), ("interpolate_object", "Object/article string interpolation"),
         ("read_other_native", "Map atom.dir"), ("read_turf_state", "Map atom.icon_state")
     }) tests.Add(($"entity appearance remains read-only: {proc}/{artifact}", () => {
         var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();

@@ -516,3 +516,10 @@ var/datum/initial_parent/initial_owner
 
 /filter
     var/scalar = 13
+
+// fexists consults only an explicitly injected tracked-source snapshot.
+var/file_snapshot_result
+/proc/test_file_snapshot(value)
+    file_snapshot_result = fexists(value)
+/proc/test_file_snapshot_read(value)
+    file_snapshot_result = file2text(value)

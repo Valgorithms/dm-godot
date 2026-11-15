@@ -1,6 +1,7 @@
 """Real-process checks for probe phases and supervisor failure handling."""
 import base64
 import json
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -97,6 +98,34 @@ class ProbeTests(unittest.TestCase):
     def test_timeout_is_ci_failure(self):
         report = capture_probe([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.1)
         self.assertEqual((report["measurement_status"], report["reason"]), ("error", "timeout"))
+
+
+    def test_explicit_inventory_binding_and_manifest_integrity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = root / "probe.json"
+            artifact.write_text(json.dumps(self.smoke))
+            digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            manifest = root / "inventory.json"
+            data = {"schema": 1, "scope": "tracked-source-filesystem-snapshot",
+                    "source_revision": "1" * 40, "source_tree": "2" * 40,
+                    "artifact_sha256": digest, "files": ["fixture/file"], "blocked_paths": ["link"]}
+            command = [self.dotnet, str(PROBE_DLL), str(artifact), "--file-inventory", str(manifest),
+                       "--source-revision", "1" * 40, "--source-tree", "2" * 40]
+            manifest.write_text(json.dumps(data))
+            report = capture_probe(command, timeout=15, expected_digest=digest)
+            self.assertEqual(report["runtime_status"], "boot_returned")
+            self.assertEqual(report["file_inventory_sha256"], hashlib.sha256(manifest.read_bytes()).hexdigest())
+            for key, wrong in (("source_revision", "3" * 40), ("source_tree", "3" * 40), ("artifact_sha256", "0" * 64)):
+                bad = dict(data, **{key: wrong})
+                manifest.write_text(json.dumps(bad))
+                report = capture_probe(command, timeout=15)
+                self.assertEqual(report["measurement_status"], "error", key)
+                self.assertIn("binding mismatch", report["stdout_tail"])
+            manifest.write_text(json.dumps(dict(data, files=["../escape"])))
+            report = capture_probe(command, timeout=15)
+            self.assertEqual((report["runtime_status"], report["phase"]), ("blocked", "artifact_load"))
+            self.assertIn("path component", report["message"])
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ on:
       - '.github/workflows/compile-civ13.yml'
       - 'scripts/check_civ13_compile.py'
       - 'scripts/check_civ13_runtime_probe.py'
+      - 'scripts/file_inventory.py'
       - 'tools/DmGodot.CompatibilityProbe/**'
       - 'src/DmGodot.Runtime/**'
       - 'scripts/compile.py'
@@ -17,6 +18,7 @@ on:
       - '.github/workflows/compile-civ13.yml'
       - 'scripts/check_civ13_compile.py'
       - 'scripts/check_civ13_runtime_probe.py'
+      - 'scripts/file_inventory.py'
       - 'tools/DmGodot.CompatibilityProbe/**'
       - 'src/DmGodot.Runtime/**'
       - 'scripts/compile.py'
@@ -61,7 +63,7 @@ jobs:
         env:
           # Diagnostic 2 GiB GC heap cap after the 1 GiB construction OOM; not a memory optimization.
           DOTNET_GCHeapHardLimit: '0x80000000'
-        run: python scripts/check_civ13_runtime_probe.py
+        run: python scripts/check_civ13_runtime_probe.py --tracked-source-files
       - name: Preserve diagnostics and provenance
         if: always()
         uses: actions/upload-artifact@v4
@@ -74,3 +76,4 @@ jobs:
             build/civ13/civ13.provenance.json
             build/civ13/reproduction.json
             build/civ13/runtime-probe.json
+            build/civ13/file-inventory.json

@@ -309,3 +309,30 @@ This subset follows pinned
 [DMOpcodeHandlers.Initial](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/DMOpcodeHandlers.cs)
 and TreeEntry.TryGetTypeVar. It does not implement all forms of initial(), including
 native loader-normalized defaults or current static-variable access.
+
+
+### Explicit file-existence snapshot
+
+The root native `fexists` stub supports exact, case-sensitive relative strings and
+resource paths through an optional sealed `DmFileInventory`. No runtime code
+queries the host filesystem, current directory, resource cache or file contents.
+The inventory defensively copies regular-file names and blocked symlink/submodule
+prefixes. A configured empty snapshot returns false; an unconfigured capability
+raises an explicit compatibility error. Non-path DM values return null as in
+pinned OpenDream `DreamProcNativeRoot.NativeProc_fexists`; empty strings and
+resources without paths return false without requiring access.
+
+Paths reject rooted/drive/UNC forms, backslashes, control characters, colon,
+wildcards, empty interior components, dot/dotdot and .git components. Safe
+directory names and trailing slashes return false; blocked paths and descendants
+raise an unsupported-path error. There is no normalization or resource aliasing:
+artifact-relative resources containing ../ remain explicitly unsupported.
+Inventory ingestion is capped at 100,000 entries, 16 MiB UTF-8 names and 4,096
+characters per path. Native queries debit bounded work before validation/lookup.
+
+The optional probe manifest is a tracked-source filesystem snapshot built from
+the verified pinned Git tree's regular blobs, bound to source commit/tree and
+artifact SHA-256. It intentionally excludes untracked/live/persistent state;
+symlink and gitlink entries are retained as blocked paths, never followed.
+This is a narrower capability than pinned host File.Exists semantics. It does
+not implement file2text, writes, savefiles or general filesystem access.

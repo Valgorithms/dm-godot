@@ -81,8 +81,11 @@ public sealed class DmRuntime {
     public int InstructionBudget { get; init; } = 100_000;
     private CompiledData Data => Project.Data;
 
-    public DmRuntime(CompiledProject project) {
+    private readonly DmFileInventory? _fileInventory;
+
+    public DmRuntime(CompiledProject project, DmFileInventory? fileInventory = null) {
         Project = project;
+        _fileInventory = fileInventory;
         _globals = new DmValue[Data.Globals?.GlobalCount ?? 0];
         foreach (var (id, value) in Data.Globals?.GlobalValues ?? []) {
             if (id < 0 || id >= _globals.Length) throw new CompatibilityException($"Invalid global index {id}.");
@@ -465,6 +468,23 @@ public sealed class DmRuntime {
         }
     }
 
+    private DmValue FileExists(DmValue value) {
+        // Pinned native returns null for non-path arguments even without a capability.
+        var path = value.Value switch { string text => text, DmResource resource => resource.Path, _ => null };
+        if (value.Value is not (string or DmResource)) return DmValue.Null;
+        if (string.IsNullOrEmpty(path)) return new(0f);
+        if (_fileInventory is null)
+            throw new CompatibilityException("fexists requires an explicitly configured tracked-source filesystem snapshot.");
+        if (path.Length > DmFileInventory.MaximumPathLength)
+            throw new CompatibilityException("File snapshot path length limit exceeded.");
+        // Prefix membership checks hash at most one prefix per character. Charge the
+        // conservative quadratic bound before validation, substring allocation or lookup.
+        var work = 1L + (long)path.Length * path.Length;
+        if (work > _budget) throw new CompatibilityException("fexists path work budget exhausted.");
+        _budget -= (int)work;
+        return new(_fileInventory.ContainsFile(path) ? 1f : 0f);
+    }
+
     private bool IsOrdinaryDatumType(int typeId) {
         var datum = false;
         for (int? current = typeId; current is not null; current = Data.Types[current.Value].Parent) {
@@ -556,6 +576,8 @@ public sealed class DmRuntime {
                             if (Suspend(fiber, Math.Max(0, delay))) return;
                         } else if (proc.OwningTypeId == 0 && proc.Name == "typesof" && proc.Bytecode is not { Length: > 0 }) {
                             frame.Push(new(TypesOf(args)));
+                        } else if (proc.OwningTypeId == 0 && proc.Name == "fexists" && proc.Bytecode is not { Length: > 0 }) {
+                            frame.Push(FileExists(args.Length == 0 ? DmValue.Null : args[0]));
                         } else {
                             if (proc.Bytecode is not { Length: > 0 } && !CanExecuteEmpty(proc))
                                 throw new CompatibilityException($"Native proc '{proc.Name}' is not implemented.");

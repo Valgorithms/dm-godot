@@ -10,6 +10,7 @@ import subprocess
 import sys
 
 from bootstrap_opendream import ROOT, find_dotnet
+from file_inventory import build_inventory
 
 PROBE_DLL = ROOT / "tools" / "DmGodot.CompatibilityProbe" / "bin" / "Release" / "net10.0" / "DmGodot.CompatibilityProbe.dll"
 TIMEOUT_SECONDS = 60
@@ -50,6 +51,8 @@ def capture_probe(command: list[str], timeout: float = TIMEOUT_SECONDS, expected
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", type=Path, default=ROOT / "build" / "civ13" / "civ13.json")
+    parser.add_argument("--tracked-source-files", action="store_true",
+                        help="Opt in to a pinned Git-tree file-existence snapshot (not live filesystem access).")
     args = parser.parse_args()
     artifact = args.artifact.resolve()
     output = artifact.parent / "runtime-probe.json"
@@ -61,7 +64,27 @@ def main() -> int:
             raise ValueError("Expected a successful clean pinned Civ13 compilation.")
         if digest != provenance.get("artifact_sha256"):
             raise ValueError("Artifact differs from compilation provenance.")
-        report = capture_probe([find_dotnet(), str(PROBE_DLL), str(artifact)], expected_digest=digest)
+        command = [find_dotnet(), str(PROBE_DLL), str(artifact)]
+        snapshot = None
+        if args.tracked_source_files:
+            snapshot = build_inventory(ROOT / "vendor" / "Civ13", source_revision=target["revision"],
+                                       source_tree=provenance["source_tree"], artifact=artifact, artifact_sha256=digest)
+            manifest = artifact.parent / "file-inventory.json"
+            manifest_bytes = (json.dumps(snapshot, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
+            manifest.write_bytes(manifest_bytes)
+            manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
+            command += ["--file-inventory", str(manifest), "--source-revision", target["revision"],
+                        "--source-tree", provenance["source_tree"]]
+        report = capture_probe(command, expected_digest=digest)
+        if snapshot is not None:
+            if report.get("file_inventory_sha256") != manifest_hash:
+                raise ValueError("Probe file inventory hash mismatch.")
+            report["file_inventory"] = {
+                "scope": snapshot["scope"], "sha256": manifest_hash,
+                "source_revision": snapshot["source_revision"], "source_tree": snapshot["source_tree"],
+                "artifact_sha256": digest, "regular_files": len(snapshot["files"]),
+                "blocked_paths": len(snapshot["blocked_paths"]),
+            }
         report.update({
             "engine_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
             "target_revision": target["revision"], "artifact_sha256": digest,

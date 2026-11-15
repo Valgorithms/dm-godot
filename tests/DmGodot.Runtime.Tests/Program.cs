@@ -642,6 +642,68 @@ tests.Add(("movable layer reads remain unsupported", () => {
     Throws(() => runtime.InvokeGlobal("test_movable_layer_read", new DmValue(mob)), "Map atom.layer");
 }));
 
+tests.Add(("cached defaults keep public dictionaries independent across mutation and future allocations", () => {
+    foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
+        var project = CompiledProject.Load(artifact);
+        var runtime = new DmRuntime(project); runtime.Boot();
+        DmObject Allocate() {
+            runtime.InvokeGlobal("test_cache_allocate");
+            return (DmObject)runtime.GetGlobal("cache_last").Value!;
+        }
+        var first = Allocate();
+        var keys = first.Variables.Keys.ToArray();
+        var firstList = (DmList)first.Variables["items"].Value!;
+        var second = Allocate();
+        var secondList = (DmList)second.Variables["items"].Value!;
+        Check(!ReferenceEquals(first.Variables, second.Variables), "Instances share their public dictionary.");
+        Check(!ReferenceEquals(firstList, secondList) && !ReferenceEquals(firstList.Values[1].Value, secondList.Values[1].Value),
+            "Initializer-created nested lists were cached.");
+        firstList.Values[0] = 99;
+        first.Variables["scalar"] = 99;
+        first.Variables.Remove("text_value");
+        first.Variables["new_host_field"] = 42;
+        first.Variables.Clear();
+        Check(second.Variables["scalar"].Number == 7 && second.Variables["text_value"].ToString() == "parent" &&
+              secondList.Values[0].Number == 1, "Mutating one instance changed another.");
+        var third = Allocate();
+        Check(third.Variables.Keys.SequenceEqual(keys), "Cache changed dictionary keys/order after host mutation.");
+        Check(third.Variables["scalar"].Number == 7 && third.Variables["text_value"].ToString() == "parent", "Future allocation inherited mutated state.");
+        Check(((DmTypeReference)third.Variables["type"].Value!).Path == "/datum/cache_parent/child" &&
+              ((DmTypeReference)third.Variables["parent_type"].Value!).Path == "/datum/cache_parent", "Cached metadata changed.");
+        Check(third.Variables["resource_value"].Value is DmResource && third.Variables["type_value"].Value is DmTypeReference,
+            "Immutable resource/type defaults changed.");
+        var separate = new DmRuntime(project); separate.Boot(); separate.InvokeGlobal("test_cache_allocate");
+        var fourth = (DmObject)separate.GetGlobal("cache_last").Value!;
+        Check(fourth.Variables["scalar"].Number == 7 && ((DmList)fourth.Variables["items"].Value!).Values[0].Number == 1,
+            "A runtime mutated shared project defaults.");
+    }
+}));
+tests.Add(("cached initializeLater defaults cannot bypass later executable initializer guards", () => {
+    var runtime = new DmRuntime(CompiledProject.Load(areaInitPath));
+    var typeId = runtime.MapCells[0].Area.TypeId; // constructor populated this cache via initializeLater=true
+    var create = typeof(DmRuntime).GetMethod("CreateInstance", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+    try {
+        create.Invoke(runtime, new object[] { typeId, false });
+        throw new Exception("Warm defaults bypassed the initializer guard.");
+    } catch (System.Reflection.TargetInvocationException ex) {
+        Check(ex.InnerException is CompatibilityException && ex.InnerException.Message.Contains("Type initializers are not implemented: /area/local"),
+            "Unexpected warm-cache initializer diagnostic.");
+    }
+}));
+tests.Add(("cold default conversion preserves ancestor error order and rejected values", () => {
+    var json = JsonNode.Parse(File.ReadAllText(path))!;
+    var turf = json["Types"]![TypeId(json, "/turf")]!;
+    var floor = json["Types"]![TypeId(json, "/turf/floor")]!;
+    turf["Variables"]!["unsupported_default"] = new JsonObject { ["type"] = 2, ["value"] = 0 };
+    floor["Variables"]!["unsupported_default"] = 0; // must not hide an unsupported ancestor value
+    floor["InitProc"] = 1;
+    foreach (var definition in json["Maps"]![0]!["CellDefinitions"]!.AsObject())
+        definition.Value!["Turf"]!["Type"] = TypeId(json, "/turf/floor");
+    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Compiler value kind 2");
+    turf["InitProc"] = 1;
+    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers are not implemented: /turf");
+}));
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

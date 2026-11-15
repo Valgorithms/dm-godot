@@ -21,10 +21,24 @@ public readonly record struct DmValue(object? Value) {
 }
 public sealed record DmTypeReference(int Id, string Path);
 public sealed record DmResource(string Path);
-public sealed class DmObject(int typeId, string typePath) {
-    public int TypeId { get; } = typeId;
-    public string TypePath { get; } = typePath;
-    public Dictionary<string, DmValue> Variables { get; } = new(StringComparer.Ordinal);
+public sealed class DmObject {
+    public int TypeId { get; }
+    public string TypePath { get; }
+    public Dictionary<string, DmValue> Variables { get; }
+    public DmObject(int typeId, string typePath) {
+        TypeId = typeId; TypePath = typePath;
+        Variables = new(StringComparer.Ordinal);
+    }
+    internal DmObject(int typeId, string typePath, IReadOnlyDictionary<string, DmValue> defaults,
+        DmValue type, DmValue parentType) {
+        TypeId = typeId; TypePath = typePath;
+        var count = defaults.Count + (defaults.ContainsKey("type") ? 0 : 1) + (defaults.ContainsKey("parent_type") ? 0 : 1);
+        Variables = new(count, StringComparer.Ordinal);
+        foreach (var pair in defaults) Variables.Add(pair.Key, pair.Value);
+        // Add metadata only after inherited variables, preserving dictionary order.
+        Variables["type"] = type;
+        Variables["parent_type"] = parentType;
+    }
 }
 /// <summary>Ordered list entries plus associative keys, distinct from a host dictionary.</summary>
 public sealed class DmList {

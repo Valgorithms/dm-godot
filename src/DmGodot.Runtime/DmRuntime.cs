@@ -54,6 +54,9 @@ public sealed class DmRuntime {
     private readonly List<RuntimeLog> _logs = [];
     private readonly PriorityQueue<Fiber, (double Time, long Sequence)> _queue = new();
     private readonly DmValue[] _globals;
+    private readonly Dictionary<int, TypeDefaults> _typeDefaults = [];
+    private sealed record TypeDefaults(IReadOnlyDictionary<string, DmValue> Variables,
+        DmValue Type, DmValue ParentType, string? ExecutableInitializerType);
     private long _sequence;
     private bool _booted;
     private int _budget;
@@ -154,18 +157,47 @@ public sealed class DmRuntime {
     }
     private DmObject CreateInstance(int id, bool initializeLater = false) {
         if (id < 0 || id >= Data.Types.Length) throw new CompatibilityException($"Invalid type ID {id}.");
-        var result = new DmObject(id, Data.Types[id].Path);
-        var chain = new Stack<TypeDefinition>();
-        for (int? current = id; current is not null; current = Data.Types[current.Value].Parent) chain.Push(Data.Types[current.Value]);
-        foreach (var type in chain) {
-            if (!initializeLater && type.InitProc is int init && Data.Procs[init].Bytecode is { Length: > 0 })
-                throw new CompatibilityException($"Type initializers are not implemented: {type.Path}.");
-            foreach (var (name, value) in type.Variables ?? []) result.Variables[name] = ConvertValue(value);
+        var defaults = GetTypeDefaults(id, initializeLater);
+        return new DmObject(id, Data.Types[id].Path, defaults.Variables, defaults.Type, defaults.ParentType);
+    }
+
+    private TypeDefaults GetTypeDefaults(int id, bool initializeLater) {
+        // Walk iteratively to the nearest complete prototype, preserving cold-path
+        // ancestor guard/conversion ordering. Never cache a partly converted type.
+        var pending = new Stack<int>();
+        TypeDefaults? inherited = null;
+        for (int? current = id; current is not null; current = Data.Types[current.Value].Parent) {
+            if (_typeDefaults.TryGetValue(current.Value, out inherited)) break;
+            pending.Push(current.Value);
         }
-        result.Variables["type"] = new(new DmTypeReference(id, result.TypePath));
-        result.Variables["parent_type"] = Data.Types[id].Parent is int parent
-            ? new(new DmTypeReference(parent, Data.Types[parent].Path)) : DmValue.Null;
-        return result;
+        if (!initializeLater && inherited?.ExecutableInitializerType is { } cachedInitializer)
+            throw new CompatibilityException($"Type initializers are not implemented: {cachedInitializer}.");
+        while (pending.TryPop(out var typeId)) {
+            var type = Data.Types[typeId];
+            var initializer = type.InitProc is int init && Data.Procs[init].Bytecode is { Length: > 0 }
+                ? type.Path : null;
+            if (!initializeLater && initializer is not null)
+                throw new CompatibilityException($"Type initializers are not implemented: {initializer}.");
+            var variables = new Dictionary<string, DmValue>(
+                (inherited?.Variables.Count ?? 0) + (type.Variables?.Count ?? 0), StringComparer.Ordinal);
+            if (inherited is not null)
+                foreach (var pair in inherited.Variables) variables.Add(pair.Key, pair.Value);
+            foreach (var (name, raw) in type.Variables ?? []) {
+                var value = ConvertValue(raw);
+                // If conversion later gains mutable values, do not silently share
+                // those across instances through this immutable-default cache.
+                if (value.Value is not (null or float or string or DmTypeReference or DmResource))
+                    throw new CompatibilityException($"Mutable type default '{type.Path}.{name}' cannot be cached.");
+                variables[name] = value;
+            }
+            inherited = new TypeDefaults(
+                new System.Collections.ObjectModel.ReadOnlyDictionary<string, DmValue>(variables),
+                new DmValue(new DmTypeReference(typeId, type.Path)),
+                inherited?.Type ?? DmValue.Null,
+                inherited?.ExecutableInitializerType ?? initializer);
+            _typeDefaults.Add(typeId, inherited);
+        }
+        return inherited!;
     }
     private DmValue ConvertValue(JsonElement value) => value.ValueKind switch {
         JsonValueKind.Null => DmValue.Null,

@@ -7,6 +7,12 @@ revision and opcode hash are checked separately by the build tooling and loader.
 
 ## Current behavior
 
+- Caches completed inherited constant defaults privately per runtime and type. Only
+  immutable converted values enter the cache; each instance still receives its own
+  ordinary public Dictionary, preallocated for its final field count. Executable
+  initializers and their mutable lists still run per instance. Cache hits retain
+  inherited initializer guards, while cold misses preserve ancestor guard/conversion
+  order. This is not a sparse overlay or shared mutable instance state.
 - Loads the pinned compiler's JSON, inherited constant type variables, globals,
   static DMM turf grids, and mapped entity coordinates.
 - Retains each static map turf and mapped movable as a DM object; unoverridden area

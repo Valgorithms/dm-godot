@@ -16,7 +16,9 @@ DLL = ROOT / "tools/DmGodot.MapBenchmark/bin/Release/net10.0/DmGodot.MapBenchmar
 CASES = tuple((side, fields, rep) for side in (32, 64, 128)
               for fields in (0, 32, 128) for rep in (1, 2, 3))
 METRICS = ("construction_elapsed_ms", "construction_process_managed_allocated_bytes",
-           "retained_managed_delta_bytes_after_forced_gc")
+           "retained_managed_delta_bytes_after_forced_gc",
+           "public_exposure_elapsed_ms", "public_exposure_process_managed_allocated_bytes",
+           "public_exposure_retained_delta_bytes_after_forced_gc")
 
 
 def run_sample(side, fields, repetition, revision, *, timeout=60):

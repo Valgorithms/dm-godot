@@ -22,6 +22,12 @@ class BenchmarkTests(unittest.TestCase):
             self.assertEqual(sample["actual_turf_count"], 4)
             self.assertEqual(sample["actual_area_count"], 1)
             self.assertEqual(sample["actual_entity_count"], 0)
+            self.assertEqual(sample["public_exposed_object_count"], 6)
+            self.assertTrue(sample["public_exposure_values_and_order_verified"])
+            self.assertGreaterEqual(sample["public_exposure_process_managed_allocated_bytes"], 0)
+            self.assertEqual(sample["public_exposure_retained_delta_bytes_after_forced_gc"],
+                             sample["managed_bytes_after_public_exposure_after_forced_gc"] -
+                             sample["managed_bytes_before_public_exposure_after_forced_gc"])
             self.assertEqual(sample["actual_turf_variable_count"], variable_count)
             self.assertEqual(sample["configured_gc_heap_hard_limit"], "0x80000000")
             self.assertEqual(sample["engine_revision"], REVISION)
@@ -61,7 +67,9 @@ class BenchmarkTests(unittest.TestCase):
                         gc_server=False, gc_latency_mode="test", processor_count=2,
                         artifact_sha256=f"{s}-{f}", construction_elapsed_ms=r,
                         construction_process_managed_allocated_bytes=r,
-                        retained_managed_delta_bytes_after_forced_gc=-r) for s, f, r in CASES]
+                        retained_managed_delta_bytes_after_forced_gc=-r,
+                        public_exposure_elapsed_ms=r, public_exposure_process_managed_allocated_bytes=r,
+                        public_exposure_retained_delta_bytes_after_forced_gc=-r) for s, f, r in CASES]
         summary = aggregate(samples)
         self.assertEqual(summary["sample_count"], 27)
         self.assertEqual(summary["groups"][0]["retained_managed_delta_bytes_after_forced_gc"]["median"], -2)

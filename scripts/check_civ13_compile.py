@@ -78,6 +78,112 @@ def map_override_inventory(data: dict, limit: int = 256) -> dict:
     }
 
 
+
+def map_storage_inventory(data: dict) -> dict:
+    """Count serialized fields and planned static identities, never estimate bytes."""
+    types = data.get("Types", [])
+    by_path = {item["Path"]: i for i, item in enumerate(types)}
+    effective = {}
+    closure = set()
+    resolving = set()
+
+    def checked_type(type_id):
+        if type(type_id) is not int or not 0 <= type_id < len(types):
+            raise ValueError("Invalid inventory type reference")
+        return types[type_id]
+
+    def defaults(type_id):
+        if type_id not in effective:
+            item = checked_type(type_id)
+            if type_id in resolving:
+                raise ValueError("Cyclic inventory type ancestry")
+            resolving.add(type_id)
+            parent = item.get("Parent")
+            inherited = dict(defaults(parent)) if parent is not None else {}
+            inherited.update(item.get("Variables") or {})
+            effective[type_id] = inherited
+            resolving.remove(type_id)
+        return effective[type_id]
+
+    def ancestors(type_id):
+        seen = set()
+        while type_id is not None:
+            if type_id in seen:
+                raise ValueError("Cyclic inventory type ancestry")
+            seen.add(type_id)
+            closure.add(type_id)
+            type_id = checked_type(type_id).get("Parent")
+
+    world_id = by_path.get("/world")
+    world = defaults(world_id) if world_id is not None else {}
+
+    def default_type(field):
+        value = world.get(field)
+        if not isinstance(value, dict) or value.get("type") != 1:
+            raise ValueError(f"Cannot inventory missing world.{field} type reference")
+        return value["value"]
+
+    counts = {}
+    area_types = set()
+    area_cells = 0
+    override_instances = {"turf": 0, "entity": 0}
+
+    def add(role, type_id, count=1):
+        counts[(role, type_id)] = counts.get((role, type_id), 0) + count
+        ancestors(type_id)
+
+    if world_id is not None:
+        add("world", world_id)
+    maps = data.get("Maps", [])
+    if any(item.get("MaxZ", 0) > 0 for item in maps):
+        area_types.add(default_type("area"))
+    for item in maps:
+        for block in item.get("Blocks", []):
+            for key in block.get("Cells", []):
+                cell = item["CellDefinitions"][key]
+                turf = cell.get("Turf")
+                add("turf", turf["Type"] if turf is not None else default_type("turf"))
+                override_instances["turf"] += bool(turf and turf.get("VarOverrides"))
+                area = cell.get("Area")
+                area_types.add(area["Type"] if area is not None else default_type("area"))
+                area_cells += 1
+                for entity in cell.get("Objects", []):
+                    add("entity", entity["Type"])
+                    override_instances["entity"] += bool(entity.get("VarOverrides"))
+    for type_id in sorted(area_types):
+        add("area", type_id)
+
+    entries = []
+    histogram = {}
+    weighted_slots = 0
+    for (role, type_id), count in sorted(counts.items()):
+        field_count = len(set(defaults(type_id)) | {"type", "parent_type"})
+        weighted_slots += count * field_count
+        histogram[field_count] = histogram.get(field_count, 0) + count
+        inherited_init = None
+        ancestor = type_id
+        while ancestor is not None:
+            if types[ancestor].get("InitProc") is not None:
+                inherited_init = types[ancestor]["InitProc"]
+                break
+            ancestor = types[ancestor].get("Parent")
+        entries.append({"role": role, "type": types[type_id]["Path"], "instances": count,
+                        "effective_fields_including_metadata": field_count,
+                        "has_inherited_initializer": inherited_init is not None})
+    return {
+        "scope": "Data-only planned static identities and inherited serialized field counts, not measured allocations, retained bytes, successful construction, or initializer execution. Repeated/overlapping serialized cells count separately; runtime may reject them.",
+        "planned_instances": sum(counts.values()),
+        "referenced_area_cells": area_cells,
+        "planned_unique_area_instances_including_default": len(area_types),
+        "instances_with_nonempty_overrides": override_instances,
+        "weighted_instance_field_slots": weighted_slots,
+        "ancestor_closure_types": len(closure),
+        "ancestor_closure_effective_field_slots": sum(len(set(defaults(i)) | {"type", "parent_type"}) for i in closure),
+        "field_count_histogram": [{"fields": fields, "instances": count} for fields, count in sorted(histogram.items())],
+        "entries": entries,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, help="Complete disposable Civ13 checkout")
@@ -131,6 +237,7 @@ def main() -> int:
         report["artifact_bytes"] = artifact.stat().st_size
         report["counts"] = {key: len(data.get(key, [])) for key in ("Types", "Procs", "Strings", "Maps")}
         report["map_override_inventory"] = map_override_inventory(data)
+        report["map_storage_inventory"] = map_storage_inventory(data)
         report["compiler_provenance"] = json.loads(artifact.with_suffix(".provenance.json").read_text())
     report_path = output_dir / "reproduction.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

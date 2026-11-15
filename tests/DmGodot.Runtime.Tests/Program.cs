@@ -704,6 +704,73 @@ tests.Add(("cold default conversion preserves ancestor error order and rejected 
     Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers are not implemented: /turf");
 }));
 
+
+tests.Add(("public object constructor remains empty with stable ordinal dictionary", () => {
+    var instance = new DmObject(0, "/datum");
+    var alias = instance.Variables;
+    Check(alias.Count == 0 && ReferenceEquals(alias, instance.Variables), "Public constructor acquired metadata or unstable dictionary.");
+    alias["same"] = 1; alias["Same"] = 2;
+    Check(alias.Count == 2, "Public dictionary comparer changed.");
+}));
+tests.Add(("deferred defaults preserve metadata collisions and insertion order", () => {
+    var ctor = typeof(DmObject).GetConstructors(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Single();
+    var defaults = new System.Collections.ObjectModel.ReadOnlyDictionary<string, DmValue>(
+        new Dictionary<string, DmValue>(StringComparer.Ordinal) {
+            ["first"] = 1, ["parent_type"] = 99, ["middle"] = DmValue.Null, ["type"] = 98
+        });
+    var type = new DmValue(new DmTypeReference(2, "/datum/child"));
+    var parent = new DmValue(new DmTypeReference(1, "/datum"));
+    var instance = (DmObject)ctor.Invoke(new object[] { 2, "/datum/child", defaults, type, parent });
+    var alias = instance.Variables;
+    Check(alias.Keys.SequenceEqual(new[] { "first", "parent_type", "middle", "type" }), "Metadata override moved existing dictionary keys.");
+    Check(alias["type"].Equals(type) && alias["parent_type"].Equals(parent) && alias.ContainsKey("middle") && alias["middle"].IsNull,
+        "Metadata precedence or present-null field changed.");
+    alias.Clear();
+    Check(ReferenceEquals(alias, instance.Variables) && instance.Variables.Count == 0, "Clear resurrected defaults or metadata.");
+    Check(defaults["type"].Number == 98 && defaults.Count == 4, "Materialization mutated defaults.");
+}));
+foreach (var artifact in new[] { semanticsPath, optimizedPath })
+    tests.Add(($"dictionary exposure and internal writes preserve authoritative host aliases: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        DmObject Allocate() {
+            runtime.InvokeGlobal("test_storage_allocate");
+            return (DmObject)runtime.GetGlobal("storage_last").Value!;
+        }
+        var first = Allocate();
+        var second = Allocate();
+        runtime.InvokeGlobal("test_storage_read", new DmValue(first));
+        Check(runtime.GetGlobal("storage_seen").Number == 7, "Unwritten default read changed.");
+        runtime.InvokeGlobal("test_storage_write", new DmValue(first), 11);
+        var alias = first.Variables;
+        Check(alias["scalar"].Number == 11 && alias["nullable"].IsNull && alias.ContainsKey("nullable"), "First internal write lost defaults.");
+        runtime.InvokeGlobal("test_storage_read", new DmValue(second));
+        Check(runtime.GetGlobal("storage_seen").Number == 7, "First write affected another instance.");
+        runtime.InvokeGlobal("test_storage_write", new DmValue(first), 12);
+        Check(ReferenceEquals(alias, first.Variables) && alias["scalar"].Number == 12, "Internal write replaced an exposed dictionary.");
+        alias["scalar"] = 23;
+        runtime.InvokeGlobal("test_storage_read", new DmValue(first));
+        Check(runtime.GetGlobal("storage_seen").Number == 23, "Host update was not visible to DM.");
+        alias.Remove("scalar");
+        Throws(() => runtime.InvokeGlobal("test_storage_read", new DmValue(first)), "Unknown field");
+        Throws(() => runtime.InvokeGlobal("test_storage_write", new DmValue(first), 24), "Cannot assign field");
+        alias.Remove("type");
+        Throws(() => runtime.InvokeGlobal("test_storage_read_type", new DmValue(first)), "Unknown field");
+        alias.Clear();
+        alias["scalar"] = DmValue.Null;
+        alias["extra"] = 31;
+        runtime.InvokeGlobal("test_storage_read", new DmValue(first));
+        Check(runtime.GetGlobal("storage_seen").IsNull, "Present-null field fell back to defaults.");
+        runtime.InvokeGlobal("test_storage_read_extra", new DmValue(first));
+        Check(runtime.GetGlobal("storage_seen").Number == 31 && alias.Count == 2 && ReferenceEquals(alias, first.Variables),
+            "Host Clear/Add lost authority or resurrected metadata.");
+        runtime.InvokeGlobal("test_storage_write", new DmValue(first), 32);
+        Check(alias["scalar"].Number == 32 && !alias.ContainsKey("type"), "Write regenerated cleared metadata.");
+        var third = Allocate();
+        runtime.InvokeGlobal("test_storage_read", new DmValue(third));
+        Check(runtime.GetGlobal("storage_seen").Number == 7 && second.Variables["scalar"].Number == 7,
+            "Host mutation leaked to another or future object.");
+    }));
+
 var movableInitPath = args.Length > 7 ? args[7] : "build/movable-init.json";
 var movableInitOptimizedPath = args.Length > 8 ? args[8] : "build/movable-init-optimized.json";
 foreach (var artifact in new[] { movableInitPath, movableInitOptimizedPath }) {

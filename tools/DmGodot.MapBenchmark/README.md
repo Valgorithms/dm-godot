@@ -37,3 +37,14 @@ is refused; archive prior evidence before a manual rerun or use a fresh checkout
 This prevents partial reruns from mixing with old samples. The separate workflow also
 runs small real-process checks before the matrix. No runtime or compatibility
 probe behavior is changed.
+
+A second paired interval exposes every static object's public Variables dictionary,
+including world and unique areas, after the constructor retained sample. Traversal
+and deduplication occur before a separate forced-GC exposure baseline; the same
+worklist, runtime and project stay alive through the post-exposure sample. Exposure
+time, process allocation and retained delta are reported separately. Only then do
+tests read dictionary values/order and verify stable public dictionary identity.
+This provides a negative control for deferred storage: requesting all dictionaries
+must preserve the same values/order, and may pay any deferred allocation cost.
+The matrix still contains no movable entities; logical Civ13 type/field counts
+in reproduction.json are not a byte-level memory profile or OOM attribution.

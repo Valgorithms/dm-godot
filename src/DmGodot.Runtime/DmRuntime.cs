@@ -93,9 +93,9 @@ public sealed class DmRuntime {
         // InstructionBudget setting applies to later Boot/InvokeGlobal/AdvanceBy calls.
         _budget = 100_000;
         LoadMaps();
-        World.Variables["maxx"] = Width;
-        World.Variables["maxy"] = Height;
-        World.Variables["maxz"] = Levels;
+        World.SetVariable("maxx", Width);
+        World.SetVariable("maxy", Height);
+        World.SetVariable("maxz", Levels);
     }
 
     public void Boot() {
@@ -265,7 +265,7 @@ public sealed class DmRuntime {
         var cells = new Dictionary<(int, int, int), WorldTile>();
         var areas = new Dictionary<int, DmObject>();
         if ((Data.Maps ?? []).Any(map => map.MaxZ > 0)) {
-            var defaultAreaId = World.Variables.GetValueOrDefault("area").Value is DmTypeReference defaultAreaType
+            var defaultAreaId = World.GetVariableOrDefault("area").Value is DmTypeReference defaultAreaType
                 ? defaultAreaType.Id : throw new CompatibilityException("world.area must contain a type reference for default map filling.");
             RequireMapType(defaultAreaId, "/area", "area");
             _defaultArea = CreateMapArea(defaultAreaId);
@@ -283,13 +283,13 @@ public sealed class DmRuntime {
                     if (x < 1 || y < 1 || block.Z < 1 || x > map.MaxX || y > map.MaxY || block.Z > map.MaxZ)
                         throw new CompatibilityException("Map block extends outside its declared dimensions.");
                     if (!map.CellDefinitions.TryGetValue(block.Cells[i], out var cell)) throw new CompatibilityException("Missing map cell definition.");
-                    var turfId = cell.Turf?.Type ?? (World.Variables.GetValueOrDefault("turf").Value is DmTypeReference defaultTurf
+                    var turfId = cell.Turf?.Type ?? (World.GetVariableOrDefault("turf").Value is DmTypeReference defaultTurf
                         ? defaultTurf.Id : throw new CompatibilityException("world.turf must contain a type reference for default map filling."));
                     RequireMapType(turfId, "/turf", "turf");
                     var turf = CreateMapTurf(turfId, cell.Turf?.VarOverrides);
                     if (cell.Area?.VarOverrides is not null)
                         throw new CompatibilityException("Map area variable overrides are not implemented.");
-                    var areaId = cell.Area?.Type ?? (World.Variables.GetValueOrDefault("area").Value is DmTypeReference defaultArea
+                    var areaId = cell.Area?.Type ?? (World.GetVariableOrDefault("area").Value is DmTypeReference defaultArea
                         ? defaultArea.Id : throw new CompatibilityException("world.area must contain a type reference for default map filling."));
                     RequireMapType(areaId, "/area", "area");
                     if (!areas.TryGetValue(areaId, out var area)) {
@@ -297,7 +297,7 @@ public sealed class DmRuntime {
                         areas.Add(areaId, area);
                     }
                     if (cells.ContainsKey((x, y, block.Z))) throw new CompatibilityException("Overlapping map blocks are not implemented.");
-                    cells[(x, y, block.Z)] = new(x, y, block.Z, turf.Variables.GetValueOrDefault("density").IsTruthy, turf.TypePath, turf.Variables.GetValueOrDefault("color").Value as string);
+                    cells[(x, y, block.Z)] = new(x, y, block.Z, turf.GetVariableOrDefault("density").IsTruthy, turf.TypePath, turf.GetVariableOrDefault("color").Value as string);
                     _mapLocations.Add(turf, new(x, y, block.Z, area));
                     _mapTurfs.Add((x, y, block.Z), turf);
                     var entities = new List<DmObject>();
@@ -338,12 +338,12 @@ public sealed class DmRuntime {
         // initializers remain rejected by CreateInstance; no late writes emulate them.
         var turf = CreateInstance(typeId);
         foreach (var (name, value) in overrides ?? []) {
-            if (!turf.Variables.ContainsKey(name))
+            if (!turf.HasVariable(name))
                 throw new CompatibilityException($"Map turf override '{name}' names an unknown variable.");
             if ((ProtectedMapField(turf, name) && name is not ("density" or "color" or "name" or "layer")) ||
                 name is "type" or "parent_type" or "vars" or "tag")
                 throw new CompatibilityException($"Map turf override '{name}' is not implemented.");
-            turf.Variables[name] = ConvertValue(value);
+            turf.SetVariable(name, ConvertValue(value));
         }
         return turf;
     }
@@ -351,7 +351,7 @@ public sealed class DmRuntime {
     private static DmValue TurfLayer(DmObject turf) {
         // Pinned native storage preserves every float (including infinities), and
         // nonnumbers coerce to zero. No rendering operation or integer cast occurs.
-        return turf.Variables.GetValueOrDefault("layer").Value is float number ? number : 0f;
+        return turf.GetVariableOrDefault("layer").Value is float number ? number : 0f;
     }
 
     private bool IsSubtypeOf(int typeId, string ancestorPath) {
@@ -369,14 +369,14 @@ public sealed class DmRuntime {
                 new($"Map entity override '{name}' ({category}) on {instance.TypePath}: {reason}.", inner);
             if (name is "type" or "parent_type" or "vars" or "tag")
                 throw Failure("metadata/tag override is not implemented");
-            if (!instance.Variables.ContainsKey(name))
+            if (!instance.HasVariable(name))
                 throw Failure("unknown or non-instance field is not implemented");
             for (int? typeId = instance.TypeId; typeId is not null; typeId = Data.Types[typeId.Value].Parent)
                 if (Data.Types[typeId.Value].ConstVariables?.Contains(name, StringComparer.Ordinal) == true)
                     throw Failure("const field override is not implemented");
             if (ProtectedMapField(instance, name) && name is not ("name" or "icon_state"))
                 throw Failure("native field override is not implemented");
-            try { instance.Variables[name] = ConvertValue(raw); }
+            try { instance.SetVariable(name, ConvertValue(raw)); }
             catch (CompatibilityException ex) { throw Failure(ex.Message, ex); }
             if (name == "name") _mapMovableNameOverrides.Add(instance);
         }
@@ -408,7 +408,7 @@ public sealed class DmRuntime {
         void Assignment(Reference reference, int offset) {
             if (reference.Kind != 13) throw Fault(frame, offset, $"{role} initializer may assign only its own user variables.");
             var name = Project.String(reference.Value);
-            if (!area.Variables.ContainsKey(name) || ProtectedMapField(area, name) || name is "type" or "parent_type" or "vars" or "tag")
+            if (!area.HasVariable(name) || ProtectedMapField(area, name) || name is "type" or "parent_type" or "vars" or "tag")
                 throw Fault(frame, offset, $"{role} initializer native/metadata assignment '{name}' is not implemented.");
         }
         while (reader.Position < reader.Length) {
@@ -826,12 +826,12 @@ public sealed class DmRuntime {
             // The pinned appearance setter retains strings and normalizes every
             // nonstring name to empty. Keep raw definition values untouched.
             if (IsSubtypeOf(obj.TypeId, "/turf")) {
-                if (name == "name") return obj.Variables.GetValueOrDefault("name").Value as string ?? "";
+                if (name == "name") return obj.GetVariableOrDefault("name").Value as string ?? "";
                 if (name == "layer") return TurfLayer(obj);
             }
             if (IsSubtypeOf(obj.TypeId, "/atom/movable")) {
                 if (name == "name") {
-                    var raw = obj.Variables.GetValueOrDefault(name);
+                    var raw = obj.GetVariableOrDefault(name);
                     // Upstream fills null type-definition names before map overrides.
                     // Explicit null map names instead pass through the native setter.
                     if (raw.IsNull && !_mapMovableNameOverrides.Contains(obj))
@@ -839,7 +839,7 @@ public sealed class DmRuntime {
                     return raw.Value as string ?? "";
                 }
                 if (name == "icon_state")
-                    return obj.Variables.GetValueOrDefault(name).Value is string state ? new(state) : DmValue.Null;
+                    return obj.GetVariableOrDefault(name).Value is string state ? new(state) : DmValue.Null;
             }
             if (UnsupportedMapField(obj, name)) throw new CompatibilityException($"Map atom.{name} is not implemented.");
             if (_multiLevelAreas.Contains(obj) && name is ("x" or "y" or "z"))
@@ -852,7 +852,7 @@ public sealed class DmRuntime {
             }
         }
         if (name == "vars") throw new CompatibilityException("datum.vars is not implemented.");
-        return obj.Variables.TryGetValue(name, out var value) ? value : throw new CompatibilityException($"Unknown field '{name}'.");
+        return obj.TryGetVariable(name, out var value) ? value : throw new CompatibilityException($"Unknown field '{name}'.");
     }
     private DmValue Get(Frame frame, Reference reference) => reference.Kind switch {
         1 => new(frame.Src), 2 => frame.Result, 3 => frame.Usr, 5 => new(World),
@@ -894,13 +894,13 @@ public sealed class DmRuntime {
     }
     private void SetField(DmValue owner, string name, DmValue value) {
         if (owner.Value is DmAssocList) throw new CompatibilityException($"Mutation of alist.{name} is not implemented.");
-        if (owner.Value is not DmObject obj || !obj.Variables.ContainsKey(name)) throw new CompatibilityException($"Cannot assign field '{name}'.");
+        if (owner.Value is not DmObject obj || !obj.HasVariable(name)) throw new CompatibilityException($"Cannot assign field '{name}'.");
         if (_mapLocations.ContainsKey(obj) && ProtectedMapField(obj, name))
             throw new CompatibilityException($"Mutation of map atom.{name} is not implemented.");
         if (ReferenceEquals(obj, World) && BuiltinWorldFields.Contains(name)) throw new CompatibilityException($"Mutation of world.{name} is not implemented.");
         if (name is "type" or "parent_type" or "vars")
             throw new CompatibilityException($"Mutation of datum.{name} is not implemented.");
-        obj.Variables[name] = value;
+        obj.SetVariable(name, value);
     }
     private static void Return(Fiber fiber, DmValue value) {
         fiber.Frames.RemoveAt(fiber.Frames.Count - 1);

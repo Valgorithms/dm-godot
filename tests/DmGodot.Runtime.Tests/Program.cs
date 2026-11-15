@@ -842,9 +842,9 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
     tests.Add(($"typesof native work is instruction bounded before publishing results: {artifact}", () => {
         var json = JsonNode.Parse(File.ReadAllText(artifact))!;
         var root = TypeId(json, "/datum/type_family");
-        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())) { InstructionBudget = 64 };
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())) { InstructionBudget = json["Types"]!.AsArray().Count - 1 };
         runtime.Boot();
-        Throws(() => runtime.InvokeGlobal("test_typesof", new DmValue(new DmTypeReference(root, "/datum/type_family"))), "budget");
+        Throws(() => runtime.InvokeGlobal("test_typesof", new DmValue(new DmTypeReference(root, "/datum/type_family"))), "Instruction budget exhausted during typesof");
         Check(runtime.GetGlobal("types_result").IsNull, "Failed native work published a partial result.");
     }));
     tests.Add(($"typesof output lists share the public-boundary allocation budget: {artifact}", () => {

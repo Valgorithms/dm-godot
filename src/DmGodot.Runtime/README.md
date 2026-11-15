@@ -328,7 +328,8 @@ directory names and trailing slashes return false; blocked paths and descendants
 raise an unsupported-path error. There is no normalization or resource aliasing:
 artifact-relative resources containing ../ remain explicitly unsupported.
 Inventory ingestion is capped at 100,000 entries, 16 MiB UTF-8 names and 4,096
-characters per path. Native queries debit bounded work before validation/lookup.
+UTF-16 code units per path. Blocked-prefix ingestion also has a 33,554,432-character
+aggregate hashing work limit. Native queries debit bounded work before validation/lookup.
 
 The optional probe manifest is a tracked-source filesystem snapshot built from
 the verified pinned Git tree's regular blobs, bound to source commit/tree and

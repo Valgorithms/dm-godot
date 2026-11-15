@@ -1727,7 +1727,7 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
         var empty = new DmRuntime(project, new DmFileInventory([])); empty.Boot();
         empty.InvokeGlobal("test_file_snapshot", new DmValue("file"));
         Check(empty.GetGlobal("file_snapshot_result").Number == 0, "Configured empty must differ from missing capability.");
-        var bounded = new DmRuntime(project, new DmFileInventory([])) { InstructionBudget = 100 };
+        var bounded = new DmRuntime(project, new DmFileInventory([])) { InstructionBudget = 100 }; bounded.Boot();
         Throws(() => bounded.InvokeGlobal("test_file_snapshot", new DmValue(new string('x', 20))), "path work budget");
         Throws(() => empty.InvokeGlobal("test_file_snapshot", new DmValue(new string('x', 4097))), "path length");
     }));
@@ -1743,11 +1743,33 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
 }
 tests.Add(("file inventory ingestion rejects duplicates, unsafe entries and bounded growth", () => {
     Throws(() => new DmFileInventory(["x", "x"]), "Duplicate");
+    var prefix = string.Concat(Enumerable.Repeat("a/", 500));
+    Throws(() => new DmFileInventory(Enumerable.Range(0, 1000).Select(i => prefix + i), ["blocked"]), "prefix work");
     Throws(() => new DmFileInventory([""]), "Empty");
     Throws(() => new DmFileInventory(["dir/"]), "path component");
     Throws(() => new DmFileInventory(["x/file"], ["x"]), "overlaps");
     Throws(() => new DmFileInventory(Enumerable.Range(0, 100001).Select(i => "f" + i)), "count limit");
     Throws(() => new DmFileInventory(Enumerable.Range(0, 5000).Select(i => new string('x', 4000) + i)), "byte limit");
+}));
+
+
+tests.Add(("file snapshot never falls back to a real current-directory file", () => {
+    var project = CompiledProject.Load(semanticsPath);
+    var originalDirectory = Directory.GetCurrentDirectory();
+    var fixtureDirectory = Path.Combine(Path.GetTempPath(), "dm-file-snapshot-" + Guid.NewGuid());
+    Directory.CreateDirectory(fixtureDirectory);
+    try {
+        File.WriteAllText(Path.Combine(fixtureDirectory, "decoy.txt"), "isolated test fixture");
+        Directory.SetCurrentDirectory(fixtureDirectory);
+        var configured = new DmRuntime(project, new DmFileInventory([])); configured.Boot();
+        configured.InvokeGlobal("test_file_snapshot", new DmValue("decoy.txt"));
+        Check(configured.GetGlobal("file_snapshot_result").Number == 0, "Snapshot consulted ambient cwd.");
+        var unconfigured = new DmRuntime(project); unconfigured.Boot();
+        Throws(() => unconfigured.InvokeGlobal("test_file_snapshot", new DmValue("decoy.txt")), "explicitly configured");
+    } finally {
+        Directory.SetCurrentDirectory(originalDirectory);
+        Directory.Delete(fixtureDirectory, recursive: true);
+    }
 }));
 
 var failed = 0;

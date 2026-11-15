@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from file_inventory import build_inventory, validate_path
+from file_inventory import build_inventory, validate_path, bounded_output
 
 
 class FileInventoryTests(unittest.TestCase):
@@ -96,6 +96,8 @@ class FileInventoryTests(unittest.TestCase):
                      "a/.GIT/config", "a//b", "a/./b", "a/", "", "a\0b"):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 validate_path(path)
+        with self.assertRaisesRegex(ValueError, "length"):
+            validate_path("\U0001f600" * 2049)
         with patch("file_inventory.tree_records", return_value=b"100600 blob " + b"0" * 40 + b"\tbad\0"):
             with self.assertRaisesRegex(ValueError, "mode"):
                 self.build()
@@ -105,3 +107,10 @@ class FileInventoryTests(unittest.TestCase):
         with patch("file_inventory.MAX_PATH_BYTES", 1):
             with self.assertRaisesRegex(ValueError, "size limit"):
                 self.build()
+
+    def test_tree_metadata_deadline_and_size_cap_cover_stream_reads(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            bounded_output([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.05)
+        with self.assertRaisesRegex(ValueError, "metadata limit"):
+            bounded_output([sys.executable, "-c", "print('x' * 1000)"], limit=100)
+        self.assertEqual(bounded_output([sys.executable, "-c", "print('ok')"]), b"ok\n")

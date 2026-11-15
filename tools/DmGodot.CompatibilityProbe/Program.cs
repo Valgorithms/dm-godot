@@ -48,9 +48,14 @@ try {
             args[4].Length != 40 || args[6].Length != 40 ||
             !args[4].All(Uri.IsHexDigit) || !args[6].All(Uri.IsHexDigit))
             throw new ArgumentException("File inventory source/artifact binding mismatch.");
-        inventory = new DmFileInventory(
-            root.GetProperty("files").EnumerateArray().Select(value => value.GetString()!),
-            root.GetProperty("blocked_paths").EnumerateArray().Select(value => value.GetString()!));
+        try {
+            inventory = new DmFileInventory(
+                root.GetProperty("files").EnumerateArray().Select(value => value.GetString()!),
+                root.GetProperty("blocked_paths").EnumerateArray().Select(value => value.GetString()!));
+        } catch (CompatibilityException error) {
+            // Invalid host configuration is a failed measurement, not DM incompatibility.
+            throw new ArgumentException("Invalid file inventory configuration: " + error.Message, error);
+        }
     }
     phase = "runtime_construct";
     runtime = new DmRuntime(project, inventory) { InstructionBudget = instructionBudget };

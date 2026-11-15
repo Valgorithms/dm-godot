@@ -5,6 +5,9 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 import re
+import selectors
+import os
+import time
 import subprocess
 
 MAX_PATHS = 100_000
@@ -15,7 +18,7 @@ MAX_TREE_BYTES = 32 * 1024 * 1024
 
 def validate_path(path: str) -> None:
     # Stored paths are regular names, not directory queries. No normalization.
-    if not path or len(path) > MAX_PATH_CHARS:
+    if not path or len(path.encode("utf-16-le")) // 2 > MAX_PATH_CHARS:
         raise ValueError("Invalid snapshot path length.")
     if any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in "\\\\:*?" for c in path):
         raise ValueError("Unsafe snapshot path.")
@@ -27,22 +30,40 @@ def git(root: Path, *args: str) -> str:
     return subprocess.check_output(["git", "-C", str(root), *args], text=True, timeout=30).strip()
 
 
-def tree_records(root: Path, tree: str) -> bytes:
-    # Limit the metadata stream itself before buffering an arbitrarily large tree.
-    process = subprocess.Popen(["git", "-C", str(root), "ls-tree", "-r", "-z", tree],
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+def bounded_output(command: list[str], *, timeout: float = 30, limit: int = MAX_TREE_BYTES) -> bytes:
+    # The deadline covers pipe reads as well as child exit; no communicate() buffer
+    # or blocking read before timeout enforcement.
+    deadline = time.monotonic() + timeout
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    data = bytearray()
     try:
-        data = process.stdout.read(MAX_TREE_BYTES + 1)
-        if len(data) > MAX_TREE_BYTES:
-            raise ValueError("Snapshot tree metadata limit exceeded.")
-        if process.wait(timeout=30) != 0:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    raise subprocess.TimeoutExpired(command, timeout)
+                chunk = os.read(process.stdout.fileno(), min(8192, limit + 1 - len(data)))
+                if not chunk:
+                    break
+                data.extend(chunk)
+                if len(data) > limit:
+                    raise ValueError("Snapshot tree metadata limit exceeded.")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, timeout)
+        if process.wait(timeout=remaining) != 0:
             raise ValueError("Cannot read source tree metadata.")
-        return data
+        return bytes(data)
     finally:
         if process.poll() is None:
             process.kill()
         process.wait()
         process.stdout.close()
+
+
+def tree_records(root: Path, tree: str) -> bytes:
+    return bounded_output(["git", "-C", str(root), "ls-tree", "-r", "-z", tree])
 
 
 def build_inventory(source: Path, *, source_revision: str, source_tree: str,

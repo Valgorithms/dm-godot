@@ -16,7 +16,8 @@ PROBE_DLL = ROOT / "tools" / "DmGodot.CompatibilityProbe" / "bin" / "Release" / 
 TIMEOUT_SECONDS = 60
 
 
-def capture_probe(command: list[str], timeout: float = TIMEOUT_SECONDS, expected_digest: str | None = None) -> dict:
+def capture_probe(command: list[str], timeout: float = TIMEOUT_SECONDS, expected_digest: str | None = None,
+                  expected_inventory_hash: str | None = None) -> dict:
     try:
         result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
@@ -43,6 +44,10 @@ def capture_probe(command: list[str], timeout: float = TIMEOUT_SECONDS, expected
         return {"measurement_status": "error", "runtime_status": "unknown", "reason": "artifact_hash_mismatch",
                 "expected_artifact_sha256": expected_digest, "observed_artifact_sha256": report.get("artifact_sha256"),
                 "probe_exit_code": result.returncode}
+    if expected_inventory_hash is not None and report.get("file_inventory_sha256") != expected_inventory_hash:
+        return {"measurement_status": "error", "runtime_status": "unknown", "reason": "file_inventory_hash_mismatch",
+                "expected_file_inventory_sha256": expected_inventory_hash,
+                "observed_file_inventory_sha256": report.get("file_inventory_sha256"), "probe_exit_code": result.returncode}
     report["measurement_status"] = "completed"
     report["probe_exit_code"] = result.returncode
     return report
@@ -66,19 +71,20 @@ def main() -> int:
             raise ValueError("Artifact differs from compilation provenance.")
         command = [find_dotnet(), str(PROBE_DLL), str(artifact)]
         snapshot = None
+        manifest_hash = None
         if args.tracked_source_files:
             snapshot = build_inventory(ROOT / "vendor" / "Civ13", source_revision=target["revision"],
                                        source_tree=provenance["source_tree"], artifact=artifact, artifact_sha256=digest)
             manifest = artifact.parent / "file-inventory.json"
             manifest_bytes = (json.dumps(snapshot, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
+            if len(manifest_bytes) > 32 * 1024 * 1024:
+                raise ValueError("File inventory manifest exceeds size limit.")
             manifest.write_bytes(manifest_bytes)
             manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
             command += ["--file-inventory", str(manifest), "--source-revision", target["revision"],
                         "--source-tree", provenance["source_tree"]]
-        report = capture_probe(command, expected_digest=digest)
+        report = capture_probe(command, expected_digest=digest, expected_inventory_hash=manifest_hash)
         if snapshot is not None:
-            if report.get("file_inventory_sha256") != manifest_hash:
-                raise ValueError("Probe file inventory hash mismatch.")
             report["file_inventory"] = {
                 "scope": snapshot["scope"], "sha256": manifest_hash,
                 "source_revision": snapshot["source_revision"], "source_tree": snapshot["source_tree"],

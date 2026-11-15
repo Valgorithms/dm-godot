@@ -92,11 +92,11 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(report["probe_exit_code"], 1)
 
     def test_non_json_child_output_is_ci_failure(self):
-        report = capture_probe([sys.executable, "-c", "print('not-json')"], timeout=5)
+        report = capture_probe([sys.executable, "-c", "print('not-json')"], timeout=5, expected_inventory_hash="0" * 64)
         self.assertEqual(report["measurement_status"], "error")
 
     def test_timeout_is_ci_failure(self):
-        report = capture_probe([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.1)
+        report = capture_probe([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.1, expected_inventory_hash="0" * 64)
         self.assertEqual((report["measurement_status"], report["reason"]), ("error", "timeout"))
 
 
@@ -116,6 +116,8 @@ class ProbeTests(unittest.TestCase):
             report = capture_probe(command, timeout=15, expected_digest=digest)
             self.assertEqual(report["runtime_status"], "boot_returned")
             self.assertEqual(report["file_inventory_sha256"], hashlib.sha256(manifest.read_bytes()).hexdigest())
+            mismatch = capture_probe(command, timeout=15, expected_inventory_hash="0" * 64)
+            self.assertEqual(mismatch["reason"], "file_inventory_hash_mismatch")
             for key, wrong in (("source_revision", "3" * 40), ("source_tree", "3" * 40), ("artifact_sha256", "0" * 64)):
                 bad = dict(data, **{key: wrong})
                 manifest.write_text(json.dumps(bad))
@@ -124,8 +126,9 @@ class ProbeTests(unittest.TestCase):
                 self.assertIn("binding mismatch", report["stdout_tail"])
             manifest.write_text(json.dumps(dict(data, files=["../escape"])))
             report = capture_probe(command, timeout=15)
-            self.assertEqual((report["runtime_status"], report["phase"]), ("blocked", "artifact_load"))
-            self.assertIn("path component", report["message"])
+            self.assertEqual(report["measurement_status"], "error")
+            self.assertIn("Invalid file inventory configuration", report["stdout_tail"])
+            self.assertIn("path component", report["stdout_tail"])
 
 
 if __name__ == "__main__":

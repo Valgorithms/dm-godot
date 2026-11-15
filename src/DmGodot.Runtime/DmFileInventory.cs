@@ -10,6 +10,7 @@ public sealed class DmFileInventory {
     public const int MaximumPaths = 100_000;
     public const int MaximumPathLength = 4096;
     public const int MaximumUtf8Bytes = 16 * 1024 * 1024;
+    public const int MaximumPrefixWork = 32 * 1024 * 1024;
     private readonly HashSet<string> _files = new(StringComparer.Ordinal);
     private readonly HashSet<string> _blocked = new(StringComparer.Ordinal);
 
@@ -28,7 +29,14 @@ public sealed class DmFileInventory {
         }
         Add(files, _files);
         Add(blockedPaths ?? [], _blocked);
+        long prefixWork = 0;
         foreach (var path in _files) {
+            if (_blocked.Count == 0) break;
+            prefixWork += path.Length;
+            for (var i = 0; i < path.Length; i++)
+                if (path[i] == '/') prefixWork += i;
+            if (prefixWork > MaximumPrefixWork)
+                throw new CompatibilityException("File inventory prefix work limit exceeded.");
             if (IsBlocked(path)) throw new CompatibilityException("Regular file overlaps a blocked inventory path.");
         }
     }

@@ -404,3 +404,79 @@ var/list/types_result
 /proc/test_list_subtract_twice(first)
     types_result = first - null
     types_result = first - null
+
+
+var/enum_count
+var/enum_last
+
+/proc/test_enum(values)
+    enum_count = null
+    var/value
+    for(value in values)
+        enum_count += 1
+        world << "value=[value]"
+    enum_last = value
+
+/proc/test_enum_capture(values)
+    enum_count = null
+    for(var/value in values)
+        enum_last = value
+        enum_count += 1
+        sleep(1)
+
+/proc/test_enum_break(values)
+    var/value
+    for(value in values)
+        if(value == 2)
+            break
+        world << "before=[value]"
+    enum_last = value
+
+/proc/test_enum_continue(values)
+    for(var/value in values)
+        if(value == 2)
+            continue
+        world << "continue=[value]"
+
+/proc/enum_callee(values)
+    for(var/value in values)
+        world << "inner=[value]"
+
+/proc/test_enum_nested(values)
+    for(var/value in values)
+        world << "outer=[value]"
+        enum_callee(values)
+
+/proc/test_enum_early(values)
+    for(var/value in values)
+        enum_last = value
+        return
+
+/proc/test_enum_spawn(values)
+    for(var/value in values)
+        spawn(0)
+            world << "spawn=[value]"
+        world << "parent=[value]"
+
+/proc/enum_detached(values)
+    set waitfor = 0
+    for(var/value in values)
+        world << "detached=[value]"
+        sleep(1)
+
+/proc/test_enum_detached(values)
+    enum_detached(values)
+    world << "caller"
+
+/proc/test_enum_wire(value)
+    return
+
+
+/proc/test_enum_nested_same(values)
+    for(var/outer in values)
+        for(var/inner in values)
+            world << "[outer]:[inner]"
+
+/proc/test_enum_filtered(values)
+    for(var/datum/type_family/value in values)
+        enum_count += 1

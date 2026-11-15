@@ -267,3 +267,27 @@ Copies charge one list plus positional slots and each unique live association pa
 before growth. Copy work, comparisons and RemoveAt suffix shifts consume the
 instruction budget. Failure does not publish a partial result, and both budgets
 retain their existing public execution boundaries. This does not implement -=.
+
+Unfiltered ordinary-list loops support CreateListEnumerator, Enumerate,
+EnumerateNoAssign and DestroyEnumerator with the pinned 16 frame-local slots.
+Iteration snapshots positional values/keys in order, preserving duplicates, nulls
+and shallow references. Later source-list mutation does not replace snapshot entries.
+Primitive/null/type/resource and ordinary datum containers create empty snapshots;
+atom/world contents and strict associative list containers remain explicit errors.
+Filtered, associative, type and range enumeration are still unsupported; association
+values are not copied for this values-only subset.
+
+An exhausted present snapshot assigns null through the normal guarded reference
+path before jumping. An absent/destroyed slot jumps without assigning; destroying
+an empty slot is a no-op, matching the pin. Calls own separate slots; sleep and
+waitfor detachment retain the same frame cursor. Spawn starts with empty slots
+while preserving its existing copied locals/arguments. Return releases the frame;
+Destroy clears its slot. No extra jump-based cleanup is invented.
+Snapshots charge one object plus positional entries against the cumulative
+allocation budget before copying, and copy work consumes the instruction budget.
+Each enumeration opcode consumes its normal instruction allowance. Slot IDs outside
+0..15 and malformed jump targets are rejected.
+These contracts follow pinned
+[DMOpcodeHandlers](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/DMOpcodeHandlers.cs)
+GetContentsEnumerator/CreateListEnumerator/Enumerate/DestroyEnumerator,
+DreamEnumerators' array cursor, and DMProc's spawn-state copy constructor.

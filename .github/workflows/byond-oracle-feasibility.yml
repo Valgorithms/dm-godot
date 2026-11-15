@@ -1,0 +1,72 @@
+name: BYOND oracle availability diagnostic
+on:
+  push:
+    branches: [codex/byond-splittext-oracle-feasibility]
+    paths: [.github/workflows/byond-oracle-feasibility.yml]
+permissions:
+  contents: read
+jobs:
+  official-download-metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Inspect official pinned archive without executing binaries
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, io, json, os, signal, urllib.error, urllib.parse, urllib.request, zipfile
+          URL = "https://www.byond.com/download/build/516/516.1688_byond_linux.zip"
+          report = {"oracle_status": "UNAVAILABLE", "parity_test_executed": False,
+                    "requested_url": URL, "expected_version": "516.1688",
+                    "commit": os.environ["GITHUB_SHA"], "run_id": os.environ["GITHUB_RUN_ID"],
+                    "max_download_bytes": 64 * 1024 * 1024, "deadline_seconds": 60}
+          class OfficialRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  parsed = urllib.parse.urlsplit(newurl)
+                  if parsed.scheme != "https" or parsed.hostname not in ("www.byond.com", "secure.byond.com"):
+                      raise ValueError("Redirect outside official HTTPS hosts")
+                  return super().redirect_request(req, fp, code, msg, headers, newurl)
+          def deadline(*_):
+              raise TimeoutError("60-second download/inspection deadline")
+          signal.signal(signal.SIGALRM, deadline)
+          signal.alarm(60)
+          failed = False
+          try:
+              opener = urllib.request.build_opener(OfficialRedirect())
+              with opener.open(URL, timeout=20) as response:
+                  report.update(http_status=response.status, final_url=response.url)
+                  data = response.read(report["max_download_bytes"] + 1)
+              if len(data) > report["max_download_bytes"]:
+                  raise ValueError("Archive exceeds 64 MiB limit")
+              report.update(archive_bytes=len(data), archive_sha256=hashlib.sha256(data).hexdigest())
+              with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                  members = archive.infolist()
+                  if len(members) > 4096:
+                      raise ValueError("Archive member count exceeds 4096")
+                  report["members"] = [{"path": m.filename, "bytes": m.file_size} for m in members]
+                  report["license_candidates"] = []
+                  remaining = 128 * 1024
+                  for member in members:
+                      name = member.filename.rsplit("/", 1)[-1].lower()
+                      if not member.is_dir() and any(word in name for word in ("license", "licence", "copying", "eula", "readme")):
+                          if member.file_size > 32768 or member.file_size > remaining:
+                              report["license_candidates"].append({"path": member.filename, "omitted": "bounded inspection limit"})
+                              continue
+                          raw = archive.read(member)
+                          remaining -= len(raw)
+                          report["license_candidates"].append({"path": member.filename, "sha256": hashlib.sha256(raw).hexdigest(), "text": raw.decode("utf-8", errors="replace")})
+              report["oracle_status"] = "NOT_RUN_PENDING_LICENSE_AND_TOOL_HELP_REVIEW"
+          except urllib.error.HTTPError as error:
+              report.update(http_status=error.code, final_url=error.url, reason=str(error))
+          except (urllib.error.URLError, TimeoutError) as error:
+              report["reason"] = str(error)
+          except Exception as error:
+              report.update(oracle_status="DIAGNOSTIC_ERROR", reason=type(error).__name__ + ": " + str(error))
+              failed = True
+          finally:
+              signal.alarm(0)
+              print(json.dumps(report, sort_keys=True))
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  summary.write("Oracle status: **" + report["oracle_status"] + "**. No BYOND binary or fixture was executed; this is not a parity result.\n")
+          raise SystemExit(1 if failed else 0)
+          PY

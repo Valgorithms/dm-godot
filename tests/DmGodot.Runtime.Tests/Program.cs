@@ -868,10 +868,10 @@ foreach (var artifact in new[] { alistPath, alistOptimizedPath }) {
     }));
     tests.Add(($"strict list insertion budget charges new keys only: {artifact}", () => {
         var runtime = AlistRuntime();
-        Throws(() => runtime.InvokeGlobal("growth_budget"), "allocation budget");
+        Throws(() => runtime.InvokeGlobal("growth_budget", 1), "allocation budget");
         var list = (DmAssocList)runtime.GetGlobal("result").Value!;
         Check(list.Count == 49_999 && list.Get(49_999).Number == 49_999 && !list.ContainsKey(50_000), "Rejected insertion mutated the list or escaped the budget.");
-        runtime.InvokeGlobal("overwrite_budget");
+        runtime.InvokeGlobal("overwrite_budget", 1);
         list = (DmAssocList)runtime.GetGlobal("result").Value!;
         Check(list.Count == 1 && list.Get(0).Number == 60_000, "Overwriting an existing key consumed new-key budget.");
     }));

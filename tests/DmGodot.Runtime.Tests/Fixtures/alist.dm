@@ -88,14 +88,14 @@ world
     var/a = alist()
     a:type = /list
 
-/proc/growth_budget()
+/proc/growth_budget(start)
     result = alist()
-    for (var/i = 1; i <= 50001; i += 1)
+    for (var/i = start; i <= 50001; i += 1)
         result[i] = i
 
-/proc/overwrite_budget()
+/proc/overwrite_budget(start)
     result = alist(0 = 1)
-    for (var/i = 1; i <= 60000; i += 1)
+    for (var/i = start; i <= 60000; i += 1)
         result[0] = i
 
 /proc/probe()

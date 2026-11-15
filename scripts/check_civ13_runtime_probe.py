@@ -53,6 +53,17 @@ def capture_probe(command: list[str], timeout: float = TIMEOUT_SECONDS, expected
     return report
 
 
+def load_content_allowlist(path: Path, target: dict) -> tuple[dict, str]:
+    with path.open("rb") as stream:
+        raw = stream.read(128 * 1024 + 1)
+    if len(raw) > 128 * 1024:
+        raise ValueError("Content allowlist size limit exceeded.")
+    data = json.loads(raw)
+    if data.get("schema") != 1 or data.get("source_revision") != target["revision"] or data.get("source_repository") != target["repository"]:
+        raise ValueError("Content allowlist source binding mismatch.")
+    return data, hashlib.sha256(raw).hexdigest()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", type=Path, default=ROOT / "build" / "civ13" / "civ13.json")
@@ -81,14 +92,8 @@ def main() -> int:
             allowlist_hash = None
             if args.allowlisted_source_text:
                 allowlist_path = ROOT / "compatibility" / "civ13-text-files.json"
-                allowlist_bytes = allowlist_path.read_bytes()
-                if len(allowlist_bytes) > 128 * 1024:
-                    raise ValueError("Content allowlist size limit exceeded.")
-                allowlist = json.loads(allowlist_bytes)
-                if allowlist.get("schema") != 1 or allowlist.get("source_revision") != target["revision"] or allowlist.get("source_repository") != target["repository"]:
-                    raise ValueError("Content allowlist source binding mismatch.")
+                allowlist, allowlist_hash = load_content_allowlist(allowlist_path, target)
                 content_paths = allowlist["paths"]
-                allowlist_hash = hashlib.sha256(allowlist_bytes).hexdigest()
             snapshot = build_inventory(ROOT / "vendor" / "Civ13", source_revision=target["revision"],
                                        source_tree=provenance["source_tree"], artifact=artifact, artifact_sha256=digest,
                                        content_paths=content_paths, content_allowlist_sha256=allowlist_hash)

@@ -1,5 +1,6 @@
 """Git-tree-only inventory tests; temporary repositories, never production files."""
 import hashlib
+import json
 import base64
 from pathlib import Path
 import subprocess
@@ -10,6 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from file_inventory import build_inventory, validate_path, bounded_output
+from check_civ13_runtime_probe import load_content_allowlist
 
 
 class FileInventoryTests(unittest.TestCase):
@@ -148,3 +150,17 @@ class FileInventoryTests(unittest.TestCase):
         self.git("commit", "-qm", "large")
         with self.assertRaisesRegex(ValueError, "raw byte limit"):
             self.build(content_paths=["large"], content_allowlist_sha256="a" * 64)
+
+    def test_trusted_allowlist_read_is_bounded_and_source_bound(self):
+        config = self.base / "allowed.json"
+        config.write_bytes(b" " * (128 * 1024 + 1))
+        target = {"revision": "1" * 40, "repository": "fixture"}
+        with self.assertRaisesRegex(ValueError, "size limit"):
+            load_content_allowlist(config, target)
+        data = {"schema": 1, "source_revision": "1" * 40, "source_repository": "fixture", "paths": []}
+        config.write_text(json.dumps(data))
+        parsed, digest = load_content_allowlist(config, target)
+        self.assertEqual(parsed, data)
+        self.assertEqual(digest, hashlib.sha256(config.read_bytes()).hexdigest())
+        with self.assertRaisesRegex(ValueError, "binding mismatch"):
+            load_content_allowlist(config, dict(target, revision="2" * 40))

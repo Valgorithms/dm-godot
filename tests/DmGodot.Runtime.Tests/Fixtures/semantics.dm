@@ -496,7 +496,7 @@ var/enum_last
 
 /datum/initial_effect
     var/scalar = 11
-    var/effect = initial_effect_helper()
+    var/effect = list(initial_effect_helper())
 
 /proc/initial_effect_helper()
     world << "initial-side-effect"
@@ -513,3 +513,6 @@ var/datum/initial_parent/initial_owner
 
 /proc/test_initial_wire(owner, key)
     return
+
+/filter
+    var/scalar = 13

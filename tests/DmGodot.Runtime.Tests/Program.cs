@@ -1281,8 +1281,10 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
         var type = new DmValue(new DmTypeReference(TypeId(json, "/datum/initial_parent"), "/datum/initial_parent"));
         foreach (var name in new[] { "type", "parent_type", "vars", "tag" })
             Throws(() => runtime.InvokeGlobal("test_initial_wire", type, name), "native/metadata");
-        foreach (var (path, field) in new[] { ("/atom", "name"), ("/atom", "text"), ("/atom", "density"), ("/world", "maxx"), ("/list", "len") })
+        foreach (var (path, field) in new[] { ("/atom", "name"), ("/atom", "text"), ("/atom", "density"), ("/world", "maxx"), ("/list", "len"), ("/dm_filter", "x"), ("/pixloc", "x") })
             Throws(() => runtime.InvokeGlobal("test_initial_wire", new DmValue(new DmTypeReference(TypeId(json, path), path)), field), "native/metadata");
+        runtime.InvokeGlobal("test_initial", new DmValue(new DmTypeReference(TypeId(json, "/filter"), "/filter")));
+        Check(runtime.GetGlobal("initial_result").Number == 13, "User /filter path was misclassified as native /dm_filter.");
         Throws(() => runtime.InvokeGlobal("test_initial_wire", type, 1), "numeric indexing");
         Throws(() => runtime.InvokeGlobal("test_initial_wire", DmValue.Null, DmValue.Null), "string field name");
         foreach (var owner in new DmValue[] { 1, "text", new(new DmList()), new(new DmAssocList()) })

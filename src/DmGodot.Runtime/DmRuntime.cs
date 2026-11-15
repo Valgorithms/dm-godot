@@ -1006,7 +1006,7 @@ public sealed class DmRuntime {
             atom |= type.Path == "/atom"; movable |= type.Path == "/atom/movable";
             mob |= type.Path == "/mob"; world |= type.Path == "/world";
             native |= type.Path is "/client" or "/list" or "/alist" or "/savefile" or "/icon" or
-                "/matrix" or "/regex" or "/filter" or "/sound" or "/image" or "/mutable_appearance" or
+                "/matrix" or "/regex" or "/dm_filter" or "/pixloc" or "/sound" or "/image" or "/mutable_appearance" or
                 "/generator" or "/particles" or "/database" or "/database/query" or
                 "/vector" or "/callee" or "/exception";
         }

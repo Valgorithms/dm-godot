@@ -704,6 +704,73 @@ tests.Add(("cold default conversion preserves ancestor error order and rejected 
     Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers are not implemented: /turf");
 }));
 
+
+tests.Add(("public object constructor remains empty with stable ordinal dictionary", () => {
+    var instance = new DmObject(0, "/datum");
+    var alias = instance.Variables;
+    Check(alias.Count == 0 && ReferenceEquals(alias, instance.Variables), "Public constructor acquired metadata or unstable dictionary.");
+    alias["same"] = 1; alias["Same"] = 2;
+    Check(alias.Count == 2, "Public dictionary comparer changed.");
+}));
+tests.Add(("deferred defaults preserve metadata collisions and insertion order", () => {
+    var ctor = typeof(DmObject).GetConstructors(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Single();
+    var defaults = new System.Collections.ObjectModel.ReadOnlyDictionary<string, DmValue>(
+        new Dictionary<string, DmValue>(StringComparer.Ordinal) {
+            ["first"] = 1, ["parent_type"] = 99, ["middle"] = DmValue.Null, ["type"] = 98
+        });
+    var type = new DmValue(new DmTypeReference(2, "/datum/child"));
+    var parent = new DmValue(new DmTypeReference(1, "/datum"));
+    var instance = (DmObject)ctor.Invoke(new object[] { 2, "/datum/child", defaults, type, parent });
+    var alias = instance.Variables;
+    Check(alias.Keys.SequenceEqual(new[] { "first", "parent_type", "middle", "type" }), "Metadata override moved existing dictionary keys.");
+    Check(alias["type"].Equals(type) && alias["parent_type"].Equals(parent) && alias.ContainsKey("middle") && alias["middle"].IsNull,
+        "Metadata precedence or present-null field changed.");
+    alias.Clear();
+    Check(ReferenceEquals(alias, instance.Variables) && instance.Variables.Count == 0, "Clear resurrected defaults or metadata.");
+    Check(defaults["type"].Number == 98 && defaults.Count == 4, "Materialization mutated defaults.");
+}));
+foreach (var artifact in new[] { semanticsPath, optimizedPath })
+    tests.Add(($"dictionary exposure and internal writes preserve authoritative host aliases: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        DmObject Allocate() {
+            runtime.InvokeGlobal("test_storage_allocate");
+            return (DmObject)runtime.GetGlobal("storage_last").Value!;
+        }
+        var first = Allocate();
+        var second = Allocate();
+        runtime.InvokeGlobal("test_storage_read", new DmValue(first));
+        Check(runtime.GetGlobal("storage_seen").Number == 7, "Unwritten default read changed.");
+        runtime.InvokeGlobal("test_storage_write", new DmValue(first), 11);
+        var alias = first.Variables;
+        Check(alias["scalar"].Number == 11 && alias["nullable"].IsNull && alias.ContainsKey("nullable"), "First internal write lost defaults.");
+        runtime.InvokeGlobal("test_storage_read", new DmValue(second));
+        Check(runtime.GetGlobal("storage_seen").Number == 7, "First write affected another instance.");
+        runtime.InvokeGlobal("test_storage_write", new DmValue(first), 12);
+        Check(ReferenceEquals(alias, first.Variables) && alias["scalar"].Number == 12, "Internal write replaced an exposed dictionary.");
+        alias["scalar"] = 23;
+        runtime.InvokeGlobal("test_storage_read", new DmValue(first));
+        Check(runtime.GetGlobal("storage_seen").Number == 23, "Host update was not visible to DM.");
+        alias.Remove("scalar");
+        Throws(() => runtime.InvokeGlobal("test_storage_read", new DmValue(first)), "Unknown field");
+        Throws(() => runtime.InvokeGlobal("test_storage_write", new DmValue(first), 24), "Cannot assign field");
+        alias.Remove("type");
+        Throws(() => runtime.InvokeGlobal("test_storage_read_type", new DmValue(first)), "Unknown field");
+        alias.Clear();
+        alias["scalar"] = DmValue.Null;
+        alias["extra"] = 31;
+        runtime.InvokeGlobal("test_storage_read", new DmValue(first));
+        Check(runtime.GetGlobal("storage_seen").IsNull, "Present-null field fell back to defaults.");
+        runtime.InvokeGlobal("test_storage_read_extra", new DmValue(first));
+        Check(runtime.GetGlobal("storage_seen").Number == 31 && alias.Count == 2 && ReferenceEquals(alias, first.Variables),
+            "Host Clear/Add lost authority or resurrected metadata.");
+        runtime.InvokeGlobal("test_storage_write", new DmValue(first), 32);
+        Check(alias["scalar"].Number == 32 && !alias.ContainsKey("type"), "Write regenerated cleared metadata.");
+        var third = Allocate();
+        runtime.InvokeGlobal("test_storage_read", new DmValue(third));
+        Check(runtime.GetGlobal("storage_seen").Number == 7 && second.Variables["scalar"].Number == 7,
+            "Host mutation leaked to another or future object.");
+    }));
+
 var movableInitPath = args.Length > 7 ? args[7] : "build/movable-init.json";
 var movableInitOptimizedPath = args.Length > 8 ? args[8] : "build/movable-init-optimized.json";
 foreach (var artifact in new[] { movableInitPath, movableInitOptimizedPath }) {
@@ -942,6 +1009,110 @@ foreach (var artifact in new[] { alistPath, alistOptimizedPath }) {
         var json = JsonNode.Parse(File.ReadAllText(artifact))!;
         json["Types"]![TypeId(json, "/obj/holder")]!["Variables"]!["items"] = new JsonObject { ["type"] = 6, ["values"] = new JsonArray() };
         Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Compiler value kind 6");
+    }));
+}
+
+var entityOverridePath = args.Length > 11 ? args[11] : "build/entity-overrides.json";
+var entityOverrideOptimizedPath = args.Length > 12 ? args[12] : "build/entity-overrides-optimized.json";
+foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath }) {
+    tests.Add(($"entity raw overrides precede inherited initialization and New: {artifact}", () => {
+        var project = CompiledProject.Load(artifact);
+        var runtime = new DmRuntime(project);
+        var objects = runtime.MapCells.SelectMany(c => c.Entities).ToArray();
+        Check(objects[0].Variables["items"].Number == 42 && objects[1].Variables["strict"].Number == 44 &&
+            objects[2].Variables["items"].IsNull, "Raw overrides were lost or initializer ran early.");
+        runtime.Boot();
+        Check(objects.Take(4).All(o => o.Variables["loc_seen"].Number == 1), "Native loc/New argument order changed.");
+        Check(objects.Take(4).Select(o => o.Variables["item_seen"].Number).SequenceEqual(new float[] { 2, 2, 2, 9 }), "Inherited/child initializer assignments must win over DMM overrides.");
+        Check(objects.Take(4).All(o => o.Variables["strict_seen"].Number == 4), "Strict initializer did not replace raw overrides.");
+        Check(objects.Take(3).Select(o => o.Variables["scalar_seen"].Number).SequenceEqual(new float[] { 11, 12, 1 }), "Scalar overrides leaked between cells or into type defaults.");
+        Check(objects.Take(3).Select(o => o.Variables["name_seen"].ToString()).SequenceEqual(new[] { "A", "B", "inherited name" }), "Name override/inheritance order changed.");
+        Check(objects[0].Variables["state_seen"].ToString() == "missing-state" && objects[1].Variables["state_seen"].Value is string empty && empty.Length == 0,
+            "State strings require no loaded icon and empty must remain distinct from null.");
+        var first = (DmList)objects[0].Variables["items"].Value!;
+        var second = (DmList)objects[1].Variables["items"].Value!;
+        Check(!ReferenceEquals(first, second) && !ReferenceEquals(first.Values[1].Value, second.Values[1].Value), "Per-instance nested list defaults are shared.");
+        ((DmList)first.Values[1].Value!).Values[0] = 99;
+        Check(((DmList)second.Values[1].Value!).Values[0].Number == 3, "Nested mutation crossed instance boundaries.");
+        var a = (DmAssocList)objects[0].Variables["strict"].Value!;
+        var b = (DmAssocList)objects[1].Variables["strict"].Value!;
+        Check(!ReferenceEquals(a, b) && !ReferenceEquals(a.Get(0).Value, b.Get(0).Value), "Strict initializer lists are shared.");
+        var fresh = new DmRuntime(project);
+        Check(fresh.MapCells[2].Entities[0].Variables["scalar"].Number == 1 && fresh.MapCells[0].Entities[0].Variables["items"].Number == 42,
+            "Runtime mutated shared project/cache defaults.");
+        Check(objects[4].Variables["name_seen"].ToString() == "null name", "Null type name fallback must use the final type name.");
+        Check(objects[5].Variables["name_seen"].ToString() == "leaf thing" && objects[6].Variables["name_seen"].ToString() == "reset name",
+            "Inherited raw-null or explicit child-null names must use the child leaf, not a parent's normalized name.");
+    }));
+    tests.Add(($"movable appearance reads normalize supported raw values independently: {artifact}", () => {
+        var original = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var values = new JsonNode?[] { null, JsonValue.Create(17), JsonValue.Create(""), JsonValue.Create("custom"),
+            new JsonObject { ["type"] = 1, ["value"] = TypeId(original, "/obj/base") },
+            new JsonObject { ["type"] = 0, ["resourcePath"] = "not-loaded.dmi" },
+            new JsonObject { ["type"] = 4 }, new JsonObject { ["type"] = 5 } };
+        foreach (var raw in values) {
+            var json = original.DeepClone();
+            var overrides = json["Maps"]![0]!["CellDefinitions"]!["a"]!["Objects"]![0]!["VarOverrides"]!;
+            overrides["name"] = raw?.DeepClone(); overrides["icon_state"] = raw?.DeepClone(); overrides["scalar"] = raw?.DeepClone();
+            var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+            var obj = runtime.MapCells[0].Entities[0];
+            var expectedString = raw is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+            Check(obj.Variables["name_seen"].ToString() == (expectedString ?? ""), "Nonstring name must normalize to empty string.");
+            Check(expectedString is null ? obj.Variables["state_seen"].IsNull : obj.Variables["state_seen"].Value is string state && state == expectedString,
+                "Nonstring icon_state must normalize to null, preserving empty strings.");
+            Check(obj.Variables["scalar_seen"].Equals(obj.Variables["scalar"]), "Declared user scalar was normalized as native appearance.");
+            Check(obj.Variables["name"].Equals(obj.Variables["scalar"]) && obj.Variables["icon_state"].Equals(obj.Variables["scalar"]),
+                "Read normalization destroyed raw map override values.");
+            Check(runtime.MapCells[2].Entities[0].Variables["name_seen"].ToString() == "inherited name", "Override polluted same-type default.");
+        }
+        var nullName = original.DeepClone();
+        nullName["Maps"]![0]!["CellDefinitions"]!["e"]!["Objects"]![0]!["VarOverrides"] = new JsonObject { ["name"] = null };
+        var explicitNull = new DmRuntime(CompiledProject.Parse(nullName.ToJsonString())); explicitNull.Boot();
+        Check(explicitNull.MapCells[4].Entities[0].Variables["name_seen"].ToString() == "", "Explicit null override must not regenerate a type name.");
+    }));
+    foreach (var (field, reason) in new[] {
+        ("unknown_field", "unknown or non-instance"), ("only_global", "unknown or non-instance"),
+        ("fixed", "const field"), ("type", "metadata/tag"), ("parent_type", "metadata/tag"), ("vars", "metadata/tag"), ("tag", "metadata/tag"),
+        ("loc", "native field"), ("x", "native field"), ("dir", "native field"), ("icon", "native field"), ("layer", "native field"),
+        ("density", "native field"), ("screen_loc", "native field")
+    }) tests.Add(($"entity override rejects {field}: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        json["Maps"]![0]!["CellDefinitions"]!["a"]!["Objects"]![0]!["VarOverrides"] = new JsonObject { [field] = 1 };
+        try { _ = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); throw new Exception("Unsupported override accepted."); }
+        catch (CompatibilityException ex) {
+            Check(ex.Message.Contains(reason) && ex.Message.Contains("/obj/base/child") && ex.Message.Contains(field) && ex.Message.Contains("Number"),
+                "Override diagnostic lost type/field/value category: " + ex.Message);
+        }
+    }));
+    foreach (var kind in new[] { 2, 3, 6 })
+        tests.Add(($"entity override rejects unsupported compiler value {kind}: {artifact}", () => {
+            var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+            var raw = new JsonObject { ["type"] = kind };
+            if (kind == 2) raw["value"] = 0; else raw["values"] = new JsonArray();
+            json["Maps"]![0]!["CellDefinitions"]!["a"]!["Objects"]![0]!["VarOverrides"] = new JsonObject { ["scalar"] = raw };
+            Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), $"compiler tag {kind}");
+        }));
+    foreach (var (proc, message) in new[] {
+        ("write_name", "Mutation of map atom.name"), ("write_state", "Mutation of map atom.icon_state"),
+        ("output_object", "Map atom stringification"), ("interpolate_object", "Object/article string interpolation"),
+        ("read_other_native", "Map atom.dir"), ("read_turf_state", "Map atom.icon_state")
+    }) tests.Add(($"entity appearance remains read-only: {proc}/{artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        Throws(() => runtime.InvokeGlobal(proc, new DmValue(runtime.MapCells[0].Entities[0])), message);
+    }));
+    foreach (var type in new[] { "/obj/bad_init", "/obj/bad_state_init" })
+        tests.Add(($"entity overrides do not permit native initializer writes: {type}/{artifact}", () => {
+            var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+            var entity = json["Maps"]![0]!["CellDefinitions"]!["a"]!["Objects"]![0]!;
+            entity["Type"] = TypeId(json, type); entity["VarOverrides"] = new JsonObject { ["name"] = "mapped", ["icon_state"] = "mapped" };
+            Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "native/metadata assignment");
+        }));
+    tests.Add(($"const metadata remains optional but rejects malformed names: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        json["Types"]![TypeId(json, "/obj/base")]!.AsObject().Remove("ConstVariables");
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        json["Types"]![TypeId(json, "/obj/base")]!["ConstVariables"] = new JsonArray((JsonNode?)null);
+        Throws(() => CompiledProject.Parse(json.ToJsonString()), "const variable name");
     }));
 }
 

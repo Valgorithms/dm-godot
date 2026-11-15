@@ -340,3 +340,27 @@ var/datum/cache_parent/cache_last
 
 /proc/test_cache_allocate()
     cache_last = new /datum/cache_parent/child
+
+
+/datum/storage_only
+    var/scalar = 7
+    var/nullable = null
+    var/text_value = "base"
+
+var/datum/storage_only/storage_last
+var/storage_seen
+
+/proc/test_storage_allocate()
+    storage_last = new /datum/storage_only
+
+/proc/test_storage_read(value)
+    storage_seen = value:scalar
+
+/proc/test_storage_write(value, replacement)
+    value:scalar = replacement
+
+/proc/test_storage_read_type(value)
+    storage_seen = value:type
+
+/proc/test_storage_read_extra(value)
+    storage_seen = value:extra

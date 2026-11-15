@@ -72,11 +72,11 @@ tests.Add(("null metadata is rejected cleanly", () => {
     json["Metadata"] = null;
     Throws(() => CompiledProject.Parse(json.ToJsonString()), "required metadata");
 }));
-tests.Add(("executable map type initializers remain rejected", () => {
+tests.Add(("non-initializer procedure on mapped movable fails preflight", () => {
     var json = JsonNode.Parse(File.ReadAllText(path))!;
     var mappedType = json["Types"]!.AsArray().First(t => t!["Path"]!.GetValue<string>() == "/mob/player")!;
     mappedType["InitProc"] = 1;
-    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers");
+    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Movable initializer");
 }));
 tests.Add(("direct unknown native procedure invocation fails explicitly", () => {
     var runtime = new DmRuntime(CompiledProject.Load(path)); runtime.Boot();
@@ -703,6 +703,102 @@ tests.Add(("cold default conversion preserves ancestor error order and rejected 
     turf["InitProc"] = 1;
     Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers are not implemented: /turf");
 }));
+
+var movableInitPath = args.Length > 7 ? args[7] : "build/movable-init.json";
+var movableInitOptimizedPath = args.Length > 8 ? args[8] : "build/movable-init-optimized.json";
+foreach (var artifact in new[] { movableInitPath, movableInitOptimizedPath }) {
+    tests.Add(($"movable literal initialization is deferred and fresh: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact));
+        var objects = runtime.MapCells.SelectMany(c => c.Entities).ToArray();
+        Check(objects.Length == 4 && objects.All(o => o.Variables["items"].IsNull), "Movable initializer ran during map loading.");
+        Check(runtime.Logs.Count == 0 && runtime.PendingThreads == 0, "Load produced callbacks or scheduled work.");
+        // Model an earlier callback changing a published eager identity: its initializer
+        // must still execute at its own phase and replace this placeholder.
+        objects[0].Variables["items"] = 123;
+        runtime.Boot();
+        Check(runtime.Logs.Select(l => l.Text).SequenceEqual(new[] { "area", "turf", "turf", "obj=1", "obj=1", "obj=9", "nulled", "world" }),
+            "Initializer/New ordering or deferred scheduling changed.");
+        Check(objects.All(o => o.Variables["new_count"].Number == 1 && o.Variables["loc_seen"].Number == 1), "New count or location argument changed.");
+        Check(objects.Take(3).All(o => o.Variables["usr_seen"].Number == 1), "Map root usr must be null.");
+        var first = (DmList)objects[0].Variables["items"].Value!;
+        var second = (DmList)objects[1].Variables["items"].Value!;
+        Check(!ReferenceEquals(first, second) && !ReferenceEquals(first.Values[1].Value, second.Values[1].Value), "Inherited lists share instance state.");
+        ((DmList)first.Values[1].Value!).Values[0] = 99;
+        Check(((DmList)second.Values[1].Value!).Values[0].Number == 2, "Nested list mutation leaked.");
+        Check(objects[3].Variables["items"].IsNull, "Constant child override lost to inherited initialization.");
+        Check(objects.Select(o => o.Variables["empty"].Value).Distinct().Count() == 4, "Empty lists share state.");
+        var keyed = (DmList)objects[0].Variables["keyed"].Value!;
+        Check(keyed.Values.Count == 2 && ((DmList)keyed.Get("a").Value!).Values[0].Number == 4, "Named associations or duplicate keys changed.");
+        Check(keyed.Values[1].Value is DmList && keyed.Get(keyed.Values[1]).Value is DmTypeReference, "List key identity/type value lost.");
+        var matrix = (DmList)objects[0].Variables["sized"].Value!;
+        Check(matrix.Values.Count == 2 && !ReferenceEquals(matrix.Values[0].Value, matrix.Values[1].Value), "Dimension rows alias.");
+        Check(matrix.Values.All(v => v.Value is DmList row && row.Values.Count == 3 && row.Values.All(x => x.IsNull)), "Dimension shape/null leaves changed.");
+        runtime.AdvanceBy(1);
+        Check(runtime.Logs.TakeLast(3).Select(l => l.Text).SequenceEqual(new[] { "awake=1", "awake=1", "awake=9" }), "Movable sleep continuation changed.");
+    }));
+    tests.Add(($"ordinary associative constructor preserves ordered entries: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        runtime.InvokeGlobal("literal_lists");
+        var list = (DmList)runtime.GetGlobal("result").Value!;
+        Check(list.Values.Select(v => v.ToString()).SequenceEqual(new[] { "replaced", "plain", "null-value", "grown", "plain" }), "Mixed key/value entry order changed.");
+        Check(list.Get("a").Number == 2, "Numeric replacement incorrectly removed old association.");
+        runtime.InvokeGlobal("bare_null_key");
+        var namedNull = (DmList)runtime.GetGlobal("result").Value!;
+        Check(namedNull.Values.Single().ToString() == "null" && namedNull.Get("null").ToString() == "named-null", "Compiler bare null key must remain a named string key.");
+        runtime.InvokeGlobal("fractional_list_keys");
+        list = (DmList)runtime.GetGlobal("result").Value!;
+        Check(list.Get(1.9f).ToString() == "changed" && list.Get(2.9f).ToString() == "second", "Numeric constructor/read indices must truncate.");
+        list.Set(1.9f, "write");
+        Check(list.Get(1).ToString() == "write", "Numeric list writes must truncate.");
+        foreach (var proc in new[] { "assoc_zero", "assoc_gap" }) Throws(() => runtime.InvokeGlobal(proc), "list index out of bounds");
+        foreach (var number in new[] { float.NaN, float.PositiveInfinity, float.NegativeInfinity, float.MaxValue })
+            Throws(() => runtime.InvokeGlobal("assoc_number", new DmValue(number)), "out-of-range list size/index");
+    }));
+    tests.Add(($"dimensioned constructors coerce values and bound aggregate work: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        runtime.InvokeGlobal("dimension_sizes", 2.9f, 3.9f);
+        var list = (DmList)runtime.GetGlobal("result").Value!;
+        Check(list.Values.Count == 2 && list.Values.All(v => ((DmList)v.Value!).Values.Count == 3), "Dimensions do not truncate.");
+        runtime.InvokeGlobal("dimension_sizes", 2, -3);
+        list = (DmList)runtime.GetGlobal("result").Value!;
+        Check(list.Values.Count == 2 && list.Values.All(v => ((DmList)v.Value!).Values.Count == 0), "Multidimension negative size must become zero.");
+        runtime.InvokeGlobal("dimension_sizes", "bad", 3);
+        Check(((DmList)runtime.GetGlobal("result").Value!).Values.Count == 0, "Nonnumeric dimension must become zero.");
+        runtime.InvokeGlobal("single_dimension", "bad");
+        Check(((DmList)runtime.GetGlobal("result").Value!).Values.Count == 0, "Nonnumeric single dimension must be empty.");
+        Throws(() => runtime.InvokeGlobal("single_dimension", -1), "Negative single-dimension");
+        foreach (var number in new[] { float.NaN, float.PositiveInfinity, float.MaxValue })
+            Throws(() => runtime.InvokeGlobal("single_dimension", new DmValue(number)), "out-of-range list size/index");
+        Throws(() => runtime.InvokeGlobal("dimension_sizes", 1000, 1000), "allocation budget");
+        Throws(() => runtime.InvokeGlobal("aggregate_lists"), "allocation budget");
+        runtime.InvokeGlobal("single_dimension", 3);
+        Check(((DmList)runtime.GetGlobal("result").Value!).Values.Count == 3, "Allocation budget did not reset for next invocation.");
+    }));
+    tests.Add(($"Boot retains list budget across deferred continuations: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var code = json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "boot_allocation_budget")!["Bytecode"]!.DeepClone();
+        var worldId = TypeId(json, "/world");
+        var worldNew = json["Procs"]!.AsArray().Last(p => p!["Name"]!.GetValue<string>() == "New" && p["OwningTypeId"]!.GetValue<int>() == worldId)!;
+        worldNew["Bytecode"] = code;
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+        Throws(runtime.Boot, "allocation budget");
+        runtime.InvokeGlobal("single_dimension", 3);
+        Check(((DmList)runtime.GetGlobal("result").Value!).Values.Count == 3, "Next public execution boundary failed to reset budget.");
+    }));
+    foreach (var unsafeType in new[] { "/obj/unsafe_helper", "/obj/unsafe_sleep", "/obj/unsafe_read", "/obj/unsafe_native", "/obj/unsafe_new", "/obj/local/unsafe_child", "/obj/unsafe_alist" })
+        tests.Add(($"mapped initializer preflight rejects {unsafeType}: {artifact}", () => {
+            var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+            // Last instance is unsafe: validation must finish before any Boot effects.
+            json["Maps"]![0]!["CellDefinitions"]!["b"]!["Objects"]![1]!["Type"] = TypeId(json, unsafeType);
+            try {
+                _ = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+                throw new Exception("Unsupported movable initializer accepted.");
+            } catch (CompatibilityException ex) {
+                Check(ex.Message.Contains("Movable initializer") && ex.Message.Contains("movable-init.dm:"), "Missing source-located preflight diagnostic: " + ex.Message);
+                if (unsafeType == "/obj/unsafe_alist") Check(ex.Message.Contains("StrictAssociativeList"), "alist must retain explicit opcode boundary.");
+            }
+        }));
+}
 
 var failed = 0;
 foreach (var (name, run) in tests) {

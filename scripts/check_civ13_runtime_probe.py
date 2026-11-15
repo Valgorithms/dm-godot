@@ -58,7 +58,11 @@ def main() -> int:
     parser.add_argument("--artifact", type=Path, default=ROOT / "build" / "civ13" / "civ13.json")
     parser.add_argument("--tracked-source-files", action="store_true",
                         help="Opt in to a pinned Git-tree file-existence snapshot (not live filesystem access).")
+    parser.add_argument("--allowlisted-source-text", action="store_true",
+                        help="Opt in to exact pinned public names configuration contents.")
     args = parser.parse_args()
+    if args.allowlisted_source_text and not args.tracked_source_files:
+        parser.error("--allowlisted-source-text requires --tracked-source-files")
     artifact = args.artifact.resolve()
     output = artifact.parent / "runtime-probe.json"
     try:
@@ -73,8 +77,21 @@ def main() -> int:
         snapshot = None
         manifest_hash = None
         if args.tracked_source_files:
+            content_paths = None
+            allowlist_hash = None
+            if args.allowlisted_source_text:
+                allowlist_path = ROOT / "compatibility" / "civ13-text-files.json"
+                allowlist_bytes = allowlist_path.read_bytes()
+                if len(allowlist_bytes) > 128 * 1024:
+                    raise ValueError("Content allowlist size limit exceeded.")
+                allowlist = json.loads(allowlist_bytes)
+                if allowlist.get("schema") != 1 or allowlist.get("source_revision") != target["revision"] or allowlist.get("source_repository") != target["repository"]:
+                    raise ValueError("Content allowlist source binding mismatch.")
+                content_paths = allowlist["paths"]
+                allowlist_hash = hashlib.sha256(allowlist_bytes).hexdigest()
             snapshot = build_inventory(ROOT / "vendor" / "Civ13", source_revision=target["revision"],
-                                       source_tree=provenance["source_tree"], artifact=artifact, artifact_sha256=digest)
+                                       source_tree=provenance["source_tree"], artifact=artifact, artifact_sha256=digest,
+                                       content_paths=content_paths, content_allowlist_sha256=allowlist_hash)
             manifest = artifact.parent / "file-inventory.json"
             manifest_bytes = (json.dumps(snapshot, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
             if len(manifest_bytes) > 32 * 1024 * 1024:
@@ -83,6 +100,8 @@ def main() -> int:
             manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
             command += ["--file-inventory", str(manifest), "--source-revision", target["revision"],
                         "--source-tree", provenance["source_tree"]]
+            if args.allowlisted_source_text:
+                command += ["--content-allowlist", str(allowlist_path)]
         report = capture_probe(command, expected_digest=digest, expected_inventory_hash=manifest_hash)
         if snapshot is not None:
             report["file_inventory"] = {
@@ -90,6 +109,9 @@ def main() -> int:
                 "source_revision": snapshot["source_revision"], "source_tree": snapshot["source_tree"],
                 "artifact_sha256": digest, "regular_files": len(snapshot["files"]),
                 "blocked_paths": len(snapshot["blocked_paths"]),
+                "content_files": len(snapshot.get("contents", [])),
+                "content_raw_bytes": sum(entry["byte_length"] for entry in snapshot.get("contents", [])),
+                "content_allowlist_sha256": snapshot.get("content_allowlist_sha256"),
             }
         report.update({
             "engine_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),

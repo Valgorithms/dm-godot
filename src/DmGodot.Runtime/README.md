@@ -336,4 +336,35 @@ the verified pinned Git tree's regular blobs, bound to source commit/tree and
 artifact SHA-256. It intentionally excludes untracked/live/persistent state;
 symlink and gitlink entries are retained as blocked paths, never followed.
 This is a narrower capability than pinned host File.Exists semantics. It does
-not implement file2text, writes, savefiles or general filesystem access.
+not itself grant text reads, writes, savefiles or general filesystem access.
+Text reads require the separate capability described below.
+
+
+### Allowlisted source text
+
+An additional explicit `DmTextFileSnapshot` capability implements only the root
+empty native `file2text` stub. It must share the exact configured file inventory.
+The runtime never opens paths or reads the host filesystem. The snapshot decodes
+owned immutable strings once, preserving pinned OpenDream
+`DreamResource.ReadAsString`: UTF-8 with replacement fallback, CRLF converted to
+LF, BOM/lone CR/embedded NUL retained. Empty file bytes return an empty string;
+missing files/directories return null. Non-path arguments and empty paths return
+null without access. Unconfigured capabilities, existing but excluded files,
+unsafe paths and generated resources without represented bytes fail explicitly.
+No mutable byte arrays are retained; subsequent host/input changes cannot alter
+the snapshot. This is not live ResourceManager cache/refresh or DMF parsing support.
+
+The opted-in Civ13 probe exposes only the 146 exact public names configuration
+paths in `compatibility/civ13-text-files.json`, extracted from pinned
+`code/names.dm`. That trusted list also records Git blob IDs and byte lengths.
+The builder reads verified regular blobs by immutable object ID with Git replace
+objects disabled, never by worktree path. Contents retain the source project's
+licensing. The manifest binds source commit/tree, compiled artifact, independently
+supplied allowlist hash, raw byte lengths, Git blob IDs and SHA-256 hashes.
+
+Limits are 256 files, 65,536 raw bytes per file, 1,048,576 aggregate raw bytes and
+1,048,576 aggregate decoded UTF-16 bytes. The manifest remains capped at 32 MiB,
+with base64 length checked before decoding. Every native read charges path work
+and returned UTF-16 code units before publishing a result, even when reusing a
+cached immutable string. Failed reads do not replace a caller's prior result.
+All file writes and other filesystem natives remain unsupported.

@@ -523,3 +523,7 @@ var/file_snapshot_result
     file_snapshot_result = fexists(value)
 /proc/test_file_snapshot_read(value)
     file_snapshot_result = file2text(value)
+
+/proc/test_text_snapshot_twice(value)
+    file_snapshot_result = file2text(value)
+    file_snapshot_result = file2text(value)

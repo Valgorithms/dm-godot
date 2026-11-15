@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 from pathlib import Path
 import re
 import selectors
@@ -27,7 +28,7 @@ def validate_path(path: str) -> None:
 
 
 def git(root: Path, *args: str) -> str:
-    return subprocess.check_output(["git", "-C", str(root), *args], text=True, timeout=30).strip()
+    return subprocess.check_output(["git", "--no-replace-objects", "-C", str(root), *args], text=True, timeout=30).strip()
 
 
 def bounded_output(command: list[str], *, timeout: float = 30, limit: int = MAX_TREE_BYTES) -> bytes:
@@ -63,11 +64,12 @@ def bounded_output(command: list[str], *, timeout: float = 30, limit: int = MAX_
 
 
 def tree_records(root: Path, tree: str) -> bytes:
-    return bounded_output(["git", "-C", str(root), "ls-tree", "-r", "-z", tree])
+    return bounded_output(["git", "--no-replace-objects", "-C", str(root), "ls-tree", "-r", "-z", tree])
 
 
 def build_inventory(source: Path, *, source_revision: str, source_tree: str,
-                    artifact: Path, artifact_sha256: str) -> dict:
+                    artifact: Path, artifact_sha256: str, content_paths: list[str] | None = None,
+                    content_allowlist_sha256: str | None = None) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", source_revision) or not re.fullmatch(r"[0-9a-f]{40}", source_tree):
         raise ValueError("Invalid source commit/tree binding.")
     if not re.fullmatch(r"[0-9a-f]{64}", artifact_sha256):
@@ -90,6 +92,7 @@ def build_inventory(source: Path, *, source_revision: str, source_tree: str,
     if data and not data.endswith(b"\0"):
         raise ValueError("Truncated Git tree metadata.")
     files, blocked = [], []
+    regular_blobs = {}
     count = total = 0
     for record in data.split(b"\0"):
         if not record:
@@ -104,6 +107,7 @@ def build_inventory(source: Path, *, source_revision: str, source_tree: str,
             raise ValueError("Snapshot inventory size limit exceeded.")
         if mode in ("100644", "100755") and kind == "blob":
             files.append(path)
+            regular_blobs[path] = object_id
         elif (mode == "120000" and kind == "blob") or (mode == "160000" and kind == "commit"):
             blocked.append(path)
         else:
@@ -111,7 +115,7 @@ def build_inventory(source: Path, *, source_revision: str, source_tree: str,
     verify_source()
     if hashlib.sha256(artifact.read_bytes()).hexdigest() != artifact_sha256:
         raise ValueError("Snapshot artifact changed during inventory construction.")
-    return {
+    result = {
         "schema": 1,
         "scope": "tracked-source-filesystem-snapshot",
         "source_revision": source_revision,
@@ -120,3 +124,35 @@ def build_inventory(source: Path, *, source_revision: str, source_tree: str,
         "files": files,
         "blocked_paths": blocked,
     }
+
+    if content_paths is not None:
+        if len(content_paths) > 256 or len(set(content_paths)) != len(content_paths):
+            raise ValueError("Invalid text snapshot allowlist count/duplicates.")
+        if not isinstance(content_allowlist_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", content_allowlist_sha256):
+            raise ValueError("Missing text snapshot allowlist binding.")
+        contents = []
+        total = 0
+        for path in content_paths:
+            validate_path(path)
+            object_id = regular_blobs.get(path)
+            if object_id is None:
+                raise ValueError("Allowlisted text is not a regular source-tree blob.")
+            if not re.fullmatch(r"[0-9a-f]{40}", object_id):
+                raise ValueError("Invalid source blob ID.")
+            size = int(git(absolute, "cat-file", "-s", object_id))
+            if size < 0 or size > 64 * 1024 or total + size > 1024 * 1024:
+                raise ValueError("Text snapshot raw byte limit exceeded.")
+            raw = bounded_output(["git", "--no-replace-objects", "-C", str(absolute), "cat-file", "blob", object_id],
+                                 limit=size)
+            if len(raw) != size or hashlib.sha1(b"blob " + str(size).encode("ascii") + b"\0" + raw).hexdigest() != object_id:
+                raise ValueError("Source blob size/object identity mismatch.")
+            total += size
+            contents.append({"path": path, "blob_id": object_id, "byte_length": size,
+                             "sha256": hashlib.sha256(raw).hexdigest(),
+                             "base64": base64.b64encode(raw).decode("ascii")})
+        verify_source()
+        if hashlib.sha256(artifact.read_bytes()).hexdigest() != artifact_sha256:
+            raise ValueError("Snapshot artifact changed during content construction.")
+        result["content_allowlist_sha256"] = content_allowlist_sha256
+        result["contents"] = contents
+    return result

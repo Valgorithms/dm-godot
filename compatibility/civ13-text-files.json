@@ -1,0 +1,741 @@
+{
+  "schema": 1,
+  "source_repository": "https://github.com/Civ13/Civ13.git",
+  "source_revision": "98f34be22b7c594de1b9b113f9962cd61f6f0091",
+  "source_file": "code/names.dm",
+  "note": "Exact literal file2list paths from the pinned unchanged source; not a directory or glob allowance. File contents retain upstream licensing.",
+  "paths": [
+    "config/names/adjectives.txt",
+    "config/names/ancient_names.txt",
+    "config/names/countries.txt",
+    "config/names/epithets.txt",
+    "config/names/first_ant.txt",
+    "config/names/first_carib.txt",
+    "config/names/first_crab.txt",
+    "config/names/first_female.txt",
+    "config/names/first_female_ainu.txt",
+    "config/names/first_female_arab.txt",
+    "config/names/first_female_aztec.txt",
+    "config/names/first_female_cherokee.txt",
+    "config/names/first_female_chinese.txt",
+    "config/names/first_female_chinook.txt",
+    "config/names/first_female_comanche.txt",
+    "config/names/first_female_dutch.txt",
+    "config/names/first_female_egyptian.txt",
+    "config/names/first_female_english.txt",
+    "config/names/first_female_filipino.txt",
+    "config/names/first_female_finnish.txt",
+    "config/names/first_female_french.txt",
+    "config/names/first_female_gaelic.txt",
+    "config/names/first_female_german.txt",
+    "config/names/first_female_hebrew.txt",
+    "config/names/first_female_inuit.txt",
+    "config/names/first_female_irish.txt",
+    "config/names/first_female_iroquois.txt",
+    "config/names/first_female_italian.txt",
+    "config/names/first_female_japanese.txt",
+    "config/names/first_female_kazakh.txt",
+    "config/names/first_female_korean.txt",
+    "config/names/first_female_mayan.txt",
+    "config/names/first_female_navajo.txt",
+    "config/names/first_female_oldnorse.txt",
+    "config/names/first_female_pirate.txt",
+    "config/names/first_female_polish.txt",
+    "config/names/first_female_portuguese.txt",
+    "config/names/first_female_roman.txt",
+    "config/names/first_female_russian.txt",
+    "config/names/first_female_scots.txt",
+    "config/names/first_female_scottishgaelic.txt",
+    "config/names/first_female_sioux.txt",
+    "config/names/first_female_spanish.txt",
+    "config/names/first_female_swahili.txt",
+    "config/names/first_female_tajik.txt",
+    "config/names/first_female_ukrainian.txt",
+    "config/names/first_female_vietnamese.txt",
+    "config/names/first_female_welsh.txt",
+    "config/names/first_female_zulu.txt",
+    "config/names/first_goblin.txt",
+    "config/names/first_gorilla.txt",
+    "config/names/first_lizard.txt",
+    "config/names/first_male.txt",
+    "config/names/first_male_afrikaans.txt",
+    "config/names/first_male_afro_american.txt",
+    "config/names/first_male_ainu.txt",
+    "config/names/first_male_apache.txt",
+    "config/names/first_male_arab.txt",
+    "config/names/first_male_aztec.txt",
+    "config/names/first_male_chechen.txt",
+    "config/names/first_male_cherokee.txt",
+    "config/names/first_male_chinese.txt",
+    "config/names/first_male_chinook.txt",
+    "config/names/first_male_comanche.txt",
+    "config/names/first_male_dutch.txt",
+    "config/names/first_male_egyptian.txt",
+    "config/names/first_male_english.txt",
+    "config/names/first_male_filipino.txt",
+    "config/names/first_male_finnish.txt",
+    "config/names/first_male_french.txt",
+    "config/names/first_male_gaelic.txt",
+    "config/names/first_male_german.txt",
+    "config/names/first_male_greek.txt",
+    "config/names/first_male_hawaiian.txt",
+    "config/names/first_male_hebrew.txt",
+    "config/names/first_male_inuit.txt",
+    "config/names/first_male_irish.txt",
+    "config/names/first_male_iroquois.txt",
+    "config/names/first_male_italian.txt",
+    "config/names/first_male_japanese.txt",
+    "config/names/first_male_kazakh.txt",
+    "config/names/first_male_korean.txt",
+    "config/names/first_male_mayan.txt",
+    "config/names/first_male_navajo.txt",
+    "config/names/first_male_oldnorse.txt",
+    "config/names/first_male_pirate.txt",
+    "config/names/first_male_polish.txt",
+    "config/names/first_male_portuguese.txt",
+    "config/names/first_male_roman.txt",
+    "config/names/first_male_russian.txt",
+    "config/names/first_male_scots.txt",
+    "config/names/first_male_scottishgaelic.txt",
+    "config/names/first_male_sioux.txt",
+    "config/names/first_male_spanish.txt",
+    "config/names/first_male_swahili.txt",
+    "config/names/first_male_tajik.txt",
+    "config/names/first_male_ukrainian.txt",
+    "config/names/first_male_vietnamese.txt",
+    "config/names/first_male_welsh.txt",
+    "config/names/first_male_zulu.txt",
+    "config/names/first_orc.txt",
+    "config/names/first_wolf.txt",
+    "config/names/last.txt",
+    "config/names/last_afrikaans.txt",
+    "config/names/last_afro_american.txt",
+    "config/names/last_ainu.txt",
+    "config/names/last_carib.txt",
+    "config/names/last_chechen.txt",
+    "config/names/last_chinese.txt",
+    "config/names/last_crab.txt",
+    "config/names/last_dutch.txt",
+    "config/names/last_egyptian.txt",
+    "config/names/last_english.txt",
+    "config/names/last_filipino.txt",
+    "config/names/last_finnish.txt",
+    "config/names/last_french.txt",
+    "config/names/last_gaelic.txt",
+    "config/names/last_german.txt",
+    "config/names/last_greek.txt",
+    "config/names/last_hebrew.txt",
+    "config/names/last_irish.txt",
+    "config/names/last_iroquois.txt",
+    "config/names/last_italian.txt",
+    "config/names/last_japanese.txt",
+    "config/names/last_kazakh.txt",
+    "config/names/last_korean.txt",
+    "config/names/last_oldnorse.txt",
+    "config/names/last_pirate.txt",
+    "config/names/last_polish.txt",
+    "config/names/last_portuguese.txt",
+    "config/names/last_roman.txt",
+    "config/names/last_russian.txt",
+    "config/names/last_scots.txt",
+    "config/names/last_scottishgaelic.txt",
+    "config/names/last_spanish.txt",
+    "config/names/last_swahili.txt",
+    "config/names/last_tajik.txt",
+    "config/names/last_ukrainian.txt",
+    "config/names/last_vietnamese.txt",
+    "config/names/last_welsh.txt",
+    "config/names/last_wolf.txt",
+    "config/names/last_zulu.txt",
+    "config/names/middle_roman.txt",
+    "config/names/mongolian_female.txt",
+    "config/names/mongolian_male.txt",
+    "config/names/verbs.txt"
+  ],
+  "blobs": {
+    "config/names/adjectives.txt": {
+      "oid": "400e69aa089bb8e113ec7d1eb2fb47f4da9c285e",
+      "bytes": 2820
+    },
+    "config/names/ancient_names.txt": {
+      "oid": "8be687f1067250878c91b61acbf083cb8d775d2a",
+      "bytes": 4035
+    },
+    "config/names/countries.txt": {
+      "oid": "42b6ad159b5a0c5897f5d4a1410fb5d98e587beb",
+      "bytes": 842
+    },
+    "config/names/epithets.txt": {
+      "oid": "289f400f213da652b27f09ab87582e13c0baab7d",
+      "bytes": 562
+    },
+    "config/names/first_ant.txt": {
+      "oid": "5f163e119649eda5dc8328dfb88c82558df7cce6",
+      "bytes": 731
+    },
+    "config/names/first_carib.txt": {
+      "oid": "5d02450b21f0ff47314a2bf9aa5fe3b17fa65793",
+      "bytes": 508
+    },
+    "config/names/first_crab.txt": {
+      "oid": "9c637fb9c9f9e85cb8869cb52d5d488e0b59df23",
+      "bytes": 297
+    },
+    "config/names/first_female_ainu.txt": {
+      "oid": "b4b87755d325e68bbfef83e5aac29dcff6755ae3",
+      "bytes": 46
+    },
+    "config/names/first_female_arab.txt": {
+      "oid": "4e38e7ac5a860ba43bf6cb28e16bd7378c39f7e0",
+      "bytes": 1304
+    },
+    "config/names/first_female_aztec.txt": {
+      "oid": "4e8f7092ae52d333d831f0161c2cf8ae9d6fd847",
+      "bytes": 153
+    },
+    "config/names/first_female_cherokee.txt": {
+      "oid": "bb55f54dcb4800cdcc4ebb314d1fa3751965f961",
+      "bytes": 285
+    },
+    "config/names/first_female_chinese.txt": {
+      "oid": "51e853f0c52af3ca8ab8c66aee2c9bc9f5abdc96",
+      "bytes": 1300
+    },
+    "config/names/first_female_chinook.txt": {
+      "oid": "044a60480b210c2b7b6fb6f27eb4c9b5ea52ac95",
+      "bytes": 61
+    },
+    "config/names/first_female_comanche.txt": {
+      "oid": "e8ac07198299edda45f472f78d3811acd98c2f5c",
+      "bytes": 64
+    },
+    "config/names/first_female_dutch.txt": {
+      "oid": "daedb1d66100e9740c108a1fb23569403ab5077b",
+      "bytes": 696
+    },
+    "config/names/first_female_egyptian.txt": {
+      "oid": "266b1394510a6228e4ab48630028712eb3812faf",
+      "bytes": 245
+    },
+    "config/names/first_female_english.txt": {
+      "oid": "038e93687928747a0243aaa4d9e8a7c19c2599ac",
+      "bytes": 5472
+    },
+    "config/names/first_female_filipino.txt": {
+      "oid": "e8e866109485f3ce4b9852150b3d5674ab426a6b",
+      "bytes": 802
+    },
+    "config/names/first_female_finnish.txt": {
+      "oid": "176e94d14220671f235e731de81d05a009db47ca",
+      "bytes": 904
+    },
+    "config/names/first_female_french.txt": {
+      "oid": "d59e4f6445487a12b79127a33473d5299b59921d",
+      "bytes": 162
+    },
+    "config/names/first_female_gaelic.txt": {
+      "oid": "fea89466bf9002cc66edfbf8c5f0123cf4ac155c",
+      "bytes": 168
+    },
+    "config/names/first_female_german.txt": {
+      "oid": "60275fa79259a1eb0773d9c637d6bc8ddc9a142b",
+      "bytes": 467
+    },
+    "config/names/first_female_hebrew.txt": {
+      "oid": "cbf4e6cab8be63c38949ed629320d14addf16def",
+      "bytes": 595
+    },
+    "config/names/first_female_inuit.txt": {
+      "oid": "f4d45f0f510f159593a8e2ac265fe4be49f8ef7d",
+      "bytes": 274
+    },
+    "config/names/first_female_irish.txt": {
+      "oid": "7fdc58796bf3112131392e2274085aadaf8d5dd9",
+      "bytes": 148
+    },
+    "config/names/first_female_iroquois.txt": {
+      "oid": "a66c91d5c3fe19c2a7b174ee373528c8c3704a52",
+      "bytes": 112
+    },
+    "config/names/first_female_italian.txt": {
+      "oid": "2eef9cebdbab4c2db034eaa639bdb9ca9fc7c591",
+      "bytes": 150
+    },
+    "config/names/first_female_japanese.txt": {
+      "oid": "9dde2bcb82d56830ab038dae745e4f47653945c5",
+      "bytes": 209
+    },
+    "config/names/first_female_kazakh.txt": {
+      "oid": "adfec94ea3f70d8e819a80fc528453240c63952e",
+      "bytes": 882
+    },
+    "config/names/first_female_korean.txt": {
+      "oid": "951228774f4a04fcf89cc1b0137e4e22427893a4",
+      "bytes": 421
+    },
+    "config/names/first_female_mayan.txt": {
+      "oid": "09df4ad8ca93f4c289defce1d04a9d4d0554a12e",
+      "bytes": 63
+    },
+    "config/names/first_female_navajo.txt": {
+      "oid": "2cf8a10840edc8a106a35ee4e561f02ee097a306",
+      "bytes": 67
+    },
+    "config/names/first_female_oldnorse.txt": {
+      "oid": "202b0d7c04ea0de261b52286dc8287c09bf1a782",
+      "bytes": 260
+    },
+    "config/names/first_female_pirate.txt": {
+      "oid": "038e93687928747a0243aaa4d9e8a7c19c2599ac",
+      "bytes": 5472
+    },
+    "config/names/first_female_polish.txt": {
+      "oid": "2b4e584ca388ad8e705087b2a505f3489b1986fb",
+      "bytes": 150
+    },
+    "config/names/first_female_portuguese.txt": {
+      "oid": "e8b106f6648ea551895987bd4919c9e2321c5e3f",
+      "bytes": 163
+    },
+    "config/names/first_female_roman.txt": {
+      "oid": "e202c58c9479063c58e680f4c2351dac83f74970",
+      "bytes": 309
+    },
+    "config/names/first_female_russian.txt": {
+      "oid": "f1a2d1e7e69dc0638f6c7f440f5fce794dc91371",
+      "bytes": 415
+    },
+    "config/names/first_female_scots.txt": {
+      "oid": "fa0c4fe927561af716f05d1dbcc54725f02eff7b",
+      "bytes": 352
+    },
+    "config/names/first_female_scottishgaelic.txt": {
+      "oid": "fa0c4fe927561af716f05d1dbcc54725f02eff7b",
+      "bytes": 352
+    },
+    "config/names/first_female_sioux.txt": {
+      "oid": "47d16ef705eddb65889c14e459fab5f4233aa9c1",
+      "bytes": 65
+    },
+    "config/names/first_female_spanish.txt": {
+      "oid": "cadf75ec9f2605e13c5c6340dd4d61197a0d70c6",
+      "bytes": 560
+    },
+    "config/names/first_female_swahili.txt": {
+      "oid": "cda3bdb195d8de5a429d698cf1e770812ffca1a4",
+      "bytes": 504
+    },
+    "config/names/first_female_tajik.txt": {
+      "oid": "b4463dbca6755e9ee9e58410f1f07dc27eb2ae5f",
+      "bytes": 742
+    },
+    "config/names/first_female_ukrainian.txt": {
+      "oid": "4d16ae82098f00807c70988c9887f90d557b309c",
+      "bytes": 123
+    },
+    "config/names/first_female_vietnamese.txt": {
+      "oid": "fd071eae4d6a26886f13889b122881c245a836a3",
+      "bytes": 323
+    },
+    "config/names/first_female_welsh.txt": {
+      "oid": "6b2be599f8ecd15c89a00ef39254e98cfcb8a8c6",
+      "bytes": 339
+    },
+    "config/names/first_female_zulu.txt": {
+      "oid": "b7c9c577f3e2feee319c58ebc29fd89aa30c2759",
+      "bytes": 503
+    },
+    "config/names/first_female.txt": {
+      "oid": "e7bfeb422c503572550a8dec928b37c0b9f9ae61",
+      "bytes": 6187
+    },
+    "config/names/first_goblin.txt": {
+      "oid": "5f284ba02d65631367258efb88c2f36a23b60d92",
+      "bytes": 242
+    },
+    "config/names/first_gorilla.txt": {
+      "oid": "504790bff165935aa5a601db211220d43daf5858",
+      "bytes": 378
+    },
+    "config/names/first_lizard.txt": {
+      "oid": "0837e9d9ebb093c896f9a335b82f79bd513e1c88",
+      "bytes": 601
+    },
+    "config/names/first_male_afrikaans.txt": {
+      "oid": "fed07e5d1d11a39e3a6d9cd3e612f4abe23c3390",
+      "bytes": 269
+    },
+    "config/names/first_male_afro_american.txt": {
+      "oid": "2c3cae810f0c7baa5412042c11f51ed20204b4e6",
+      "bytes": 203
+    },
+    "config/names/first_male_ainu.txt": {
+      "oid": "6b94298ac4a6b83b8abca68c5d3649041e4533a2",
+      "bytes": 101
+    },
+    "config/names/first_male_apache.txt": {
+      "oid": "aa29f03a87bb66d53d1795865f21738a09a51296",
+      "bytes": 305
+    },
+    "config/names/first_male_arab.txt": {
+      "oid": "bfb7bf429b707c27fe5cd453472d7e125daf1cee",
+      "bytes": 967
+    },
+    "config/names/first_male_aztec.txt": {
+      "oid": "90a92bd876b2b3451218dddaeebda0a02eef0094",
+      "bytes": 311
+    },
+    "config/names/first_male_chechen.txt": {
+      "oid": "c7650eeda60126f4d034c402ba4af3c5001c5931",
+      "bytes": 1058
+    },
+    "config/names/first_male_cherokee.txt": {
+      "oid": "c12a3fb0b16fa49a8ae89dbdf8d821c326cf272f",
+      "bytes": 324
+    },
+    "config/names/first_male_chinese.txt": {
+      "oid": "3ab52661ee9283dd71457fbdccb3e6cf836babad",
+      "bytes": 1284
+    },
+    "config/names/first_male_chinook.txt": {
+      "oid": "ecf33526b37abdb56d6481a31bb78fa475e2879a",
+      "bytes": 156
+    },
+    "config/names/first_male_comanche.txt": {
+      "oid": "e5ac27c514e480bb724a75ad112aa5f6628aa506",
+      "bytes": 380
+    },
+    "config/names/first_male_dutch.txt": {
+      "oid": "991f09b1097b51e722801444cedde0f0dc97ba8b",
+      "bytes": 616
+    },
+    "config/names/first_male_egyptian.txt": {
+      "oid": "f9558359f79cf9589f82f150bccd597b1b65f876",
+      "bytes": 280
+    },
+    "config/names/first_male_english.txt": {
+      "oid": "928958d1a95e40ccac8d8c7473e707a13b5d6ce1",
+      "bytes": 4473
+    },
+    "config/names/first_male_filipino.txt": {
+      "oid": "1e2b7dac08b71cd6fc45cd0028063e453f25d0ee",
+      "bytes": 711
+    },
+    "config/names/first_male_finnish.txt": {
+      "oid": "fe86d91a2dd13710b548840f7003001d34e6776b",
+      "bytes": 2565
+    },
+    "config/names/first_male_french.txt": {
+      "oid": "25f52cdd1ca40abea86ae557a50810c19faba29d",
+      "bytes": 1167
+    },
+    "config/names/first_male_gaelic.txt": {
+      "oid": "103da6bada439e901f2ba206b31b48a8cc18cb39",
+      "bytes": 496
+    },
+    "config/names/first_male_german.txt": {
+      "oid": "9e2d2507187651621ac9d081e5fff7c3fa9d3632",
+      "bytes": 706
+    },
+    "config/names/first_male_greek.txt": {
+      "oid": "7163308c085a3ac879d2ad0d195752f0512e12c5",
+      "bytes": 1906
+    },
+    "config/names/first_male_hawaiian.txt": {
+      "oid": "bd5bc8f8e7f3f4c8c66cd2863d089252ef56fb5c",
+      "bytes": 296
+    },
+    "config/names/first_male_hebrew.txt": {
+      "oid": "b31b8b373fde7c9eb6a32493db119b66a8e88b1e",
+      "bytes": 612
+    },
+    "config/names/first_male_inuit.txt": {
+      "oid": "69f341b0d49c053b93dd33c4d8d202ca0412950d",
+      "bytes": 290
+    },
+    "config/names/first_male_irish.txt": {
+      "oid": "ab602fa5016d4daf1a86ca97f758095049c35e09",
+      "bytes": 273
+    },
+    "config/names/first_male_iroquois.txt": {
+      "oid": "7a61a8553e8d9f90840da08b0cad05fb1301e9cf",
+      "bytes": 467
+    },
+    "config/names/first_male_italian.txt": {
+      "oid": "c1651860a045207064a548a4afc5f2cd7407999c",
+      "bytes": 164
+    },
+    "config/names/first_male_japanese.txt": {
+      "oid": "fdf56912c0081e9618584e13ef9f6811dd44644d",
+      "bytes": 256
+    },
+    "config/names/first_male_kazakh.txt": {
+      "oid": "a4c926e3fb712eb0a5f1e065e4b9bb781a4e16dc",
+      "bytes": 842
+    },
+    "config/names/first_male_korean.txt": {
+      "oid": "a3eca797915589b2abcef4db68dde4b2c3024c2a",
+      "bytes": 468
+    },
+    "config/names/first_male_mayan.txt": {
+      "oid": "8fe884fe1767977b17f09b11f393fbc3386552dc",
+      "bytes": 139
+    },
+    "config/names/first_male_navajo.txt": {
+      "oid": "1bd93926ea1c7396984b93ee654221ff6a756c9a",
+      "bytes": 209
+    },
+    "config/names/first_male_oldnorse.txt": {
+      "oid": "1cafe698f6e95133de469dbcd6635ad3c6aaaebb",
+      "bytes": 774
+    },
+    "config/names/first_male_pirate.txt": {
+      "oid": "928958d1a95e40ccac8d8c7473e707a13b5d6ce1",
+      "bytes": 4473
+    },
+    "config/names/first_male_polish.txt": {
+      "oid": "f6a042bf5ca8c044e0bada6ce8f20bd927d96c1b",
+      "bytes": 163
+    },
+    "config/names/first_male_portuguese.txt": {
+      "oid": "edda40e8403e80f56983feefb6acdc7016e68682",
+      "bytes": 213
+    },
+    "config/names/first_male_roman.txt": {
+      "oid": "268095541cc39c3111e14270db3b48e38a42832a",
+      "bytes": 393
+    },
+    "config/names/first_male_russian.txt": {
+      "oid": "ef0e7dcdd3b5fcb6e4ae123db04af09d42f40a59",
+      "bytes": 589
+    },
+    "config/names/first_male_scots.txt": {
+      "oid": "e44304e275b6703c608778704a9ea7f5dbe85587",
+      "bytes": 404
+    },
+    "config/names/first_male_scottishgaelic.txt": {
+      "oid": "65eb7c783b868ce9bf931a4ffd8dd48da88b2d0c",
+      "bytes": 169
+    },
+    "config/names/first_male_sioux.txt": {
+      "oid": "878abf77f356c2351744dace553a6a745960d67e",
+      "bytes": 152
+    },
+    "config/names/first_male_spanish.txt": {
+      "oid": "0a4974bccd04da74a275a1f9dd3be2f99a5ddedc",
+      "bytes": 531
+    },
+    "config/names/first_male_swahili.txt": {
+      "oid": "ff40fa3069f6f99cf68945fa57c9ba234e0df81f",
+      "bytes": 374
+    },
+    "config/names/first_male_tajik.txt": {
+      "oid": "9f6573dea5eda3df6a8119c6965b6f9f046ef8a6",
+      "bytes": 694
+    },
+    "config/names/first_male_ukrainian.txt": {
+      "oid": "f53480ffd9449123c82a933d057d6f60f5d60dcb",
+      "bytes": 124
+    },
+    "config/names/first_male_vietnamese.txt": {
+      "oid": "a3eca797915589b2abcef4db68dde4b2c3024c2a",
+      "bytes": 468
+    },
+    "config/names/first_male_welsh.txt": {
+      "oid": "8b00de206ff5a38f2e969eea8364b2a64aa0386c",
+      "bytes": 683
+    },
+    "config/names/first_male_zulu.txt": {
+      "oid": "b4da1d7c345e42682bed893fb5f5184ef94ead22",
+      "bytes": 707
+    },
+    "config/names/first_male.txt": {
+      "oid": "c392f1815cb0ed405c9b1576c67aa80f5afed239",
+      "bytes": 7035
+    },
+    "config/names/first_orc.txt": {
+      "oid": "bce88a5ea7cdb2405f7d8efdf2fde7ecd34b1e84",
+      "bytes": 800
+    },
+    "config/names/first_wolf.txt": {
+      "oid": "6470d108ac70e0c319f6ebc25d94e03ded5185a3",
+      "bytes": 257
+    },
+    "config/names/last_afrikaans.txt": {
+      "oid": "3be9ee9004f71cf28ebc4a8e336f521c983ae119",
+      "bytes": 767
+    },
+    "config/names/last_afro_american.txt": {
+      "oid": "8e07a8c95726493a35d1470220e7c4309b24fa13",
+      "bytes": 370
+    },
+    "config/names/last_ainu.txt": {
+      "oid": "b91550013c74d647be28faaa209552262c5b698d",
+      "bytes": 98
+    },
+    "config/names/last_carib.txt": {
+      "oid": "6b55eb1ed7c00e579942a39b428a61fe0c2586f5",
+      "bytes": 276
+    },
+    "config/names/last_chechen.txt": {
+      "oid": "326051690585aa767387be9e4e86bad4a1cec92f",
+      "bytes": 623
+    },
+    "config/names/last_chinese.txt": {
+      "oid": "c95c8c9ce0ecfda0b1cffcd661cfda68509f95c9",
+      "bytes": 88
+    },
+    "config/names/last_crab.txt": {
+      "oid": "55a54c318298206b349152981530edb3fa51a918",
+      "bytes": 188
+    },
+    "config/names/last_dutch.txt": {
+      "oid": "f2b2863819c6d30ea37ccfeb92f4a4649e344bb8",
+      "bytes": 1021
+    },
+    "config/names/last_egyptian.txt": {
+      "oid": "47580940a92c4e20eb9bd9a0463d91e917a9fc94",
+      "bytes": 369
+    },
+    "config/names/last_english.txt": {
+      "oid": "7232b8a60f46711321d2c8b4d3f3afa8caf4b362",
+      "bytes": 3154
+    },
+    "config/names/last_filipino.txt": {
+      "oid": "3817fb360c0aeae98bf6a6b2b86058a080f8f154",
+      "bytes": 956
+    },
+    "config/names/last_finnish.txt": {
+      "oid": "b3a713057e20d5da4aca1690b70a0bfe4cbbb8ae",
+      "bytes": 736
+    },
+    "config/names/last_french.txt": {
+      "oid": "2aa4d79874d347c7d910eadcccd0883daabf5a33",
+      "bytes": 668
+    },
+    "config/names/last_gaelic.txt": {
+      "oid": "fa1a3c018132c84ee45a0367bd8a54b6d0e13140",
+      "bytes": 446
+    },
+    "config/names/last_german.txt": {
+      "oid": "943f0016c90c338e5224be92ede720c4d63e58a6",
+      "bytes": 516
+    },
+    "config/names/last_greek.txt": {
+      "oid": "dab4912ccabfed02d7d48bbf057dc6185055738d",
+      "bytes": 3485
+    },
+    "config/names/last_hebrew.txt": {
+      "oid": "b995543f64cd0aaa2e1148da7ecd1424394c58df",
+      "bytes": 755
+    },
+    "config/names/last_irish.txt": {
+      "oid": "04f325ec71e2237a1946c825bbda52d56f4430c5",
+      "bytes": 2749
+    },
+    "config/names/last_iroquois.txt": {
+      "oid": "d83576ebf8358e8fce17a647d727be46ab0e0dad",
+      "bytes": 175
+    },
+    "config/names/last_italian.txt": {
+      "oid": "65cef76be58a3ffd7470200ddbc2d8407abb7c36",
+      "bytes": 177
+    },
+    "config/names/last_japanese.txt": {
+      "oid": "644ff05139c92ecc98d98a1c89ccd5e0df4f7d62",
+      "bytes": 255
+    },
+    "config/names/last_kazakh.txt": {
+      "oid": "73cd7157ab4fec9b778a73704db9407dcecb57d8",
+      "bytes": 1165
+    },
+    "config/names/last_korean.txt": {
+      "oid": "2b6be3e0ea59a737c3e7eedaee67777205438bda",
+      "bytes": 370
+    },
+    "config/names/last_oldnorse.txt": {
+      "oid": "fab0fff8b48d21815ed60699db5a5991438af685",
+      "bytes": 447
+    },
+    "config/names/last_pirate.txt": {
+      "oid": "6796c7519e89ba5d3abbd31ed0f46c318e77aed8",
+      "bytes": 4259
+    },
+    "config/names/last_polish.txt": {
+      "oid": "aeeb45ecf5ed6bf90bd683bb96e284e5d9139db1",
+      "bytes": 172
+    },
+    "config/names/last_portuguese.txt": {
+      "oid": "7e424be3688e11c39b606aba1f20f1868c1f6b15",
+      "bytes": 670
+    },
+    "config/names/last_roman.txt": {
+      "oid": "e17e96f89e822df9bef45c961b16085403b938d2",
+      "bytes": 952
+    },
+    "config/names/last_russian.txt": {
+      "oid": "817ca06dacb7ffc2e58dedb957a5e03785d67f27",
+      "bytes": 1040
+    },
+    "config/names/last_scots.txt": {
+      "oid": "a62a72082f19eae61782fbf95b358a0a92de35f4",
+      "bytes": 601
+    },
+    "config/names/last_scottishgaelic.txt": {
+      "oid": "5b194e71c5cc707a296575316577d573175de57b",
+      "bytes": 375
+    },
+    "config/names/last_spanish.txt": {
+      "oid": "8d8f976e4b7a736b513995204dbefe86f7d52416",
+      "bytes": 706
+    },
+    "config/names/last_swahili.txt": {
+      "oid": "a77f610d557d1d9fe6812096ad4f8ddfc94f2428",
+      "bytes": 708
+    },
+    "config/names/last_tajik.txt": {
+      "oid": "2aa2734313e98bdb7770aa2a4982818f263cefd3",
+      "bytes": 887
+    },
+    "config/names/last_ukrainian.txt": {
+      "oid": "2b0148fab8a8429c0468caca53fb2f5a004beb7d",
+      "bytes": 262
+    },
+    "config/names/last_vietnamese.txt": {
+      "oid": "322e941dfa3a09aee99ea4dd59afea3ec8ca16f4",
+      "bytes": 800
+    },
+    "config/names/last_welsh.txt": {
+      "oid": "d4f997e38070ec6a82da54ca1023d977eddf0d96",
+      "bytes": 682
+    },
+    "config/names/last_wolf.txt": {
+      "oid": "147255eb6cce30657243fb89354f5ae64ea37ce0",
+      "bytes": 144
+    },
+    "config/names/last_zulu.txt": {
+      "oid": "f6f999966334413a95dd674f73e8192feba613f5",
+      "bytes": 1013
+    },
+    "config/names/last.txt": {
+      "oid": "f400e4e3305f6a46031f1e419ac807bb33d90e73",
+      "bytes": 8686
+    },
+    "config/names/middle_roman.txt": {
+      "oid": "e511ed98271eed6c9a02364952f670baa2fc8434",
+      "bytes": 901
+    },
+    "config/names/mongolian_female.txt": {
+      "oid": "b98ac124fcac6af8ea4ada5a67a891cfe99fe33c",
+      "bytes": 2468
+    },
+    "config/names/mongolian_male.txt": {
+      "oid": "db6960c514b6b7ac2a9ce07f5e45fbb31b486f6f",
+      "bytes": 2453
+    },
+    "config/names/verbs.txt": {
+      "oid": "fc90f89e40089df7f3702f66d633424abe09696a",
+      "bytes": 3981
+    }
+  }
+}

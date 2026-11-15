@@ -1,5 +1,6 @@
 """Git-tree-only inventory tests; temporary repositories, never production files."""
 import hashlib
+import base64
 from pathlib import Path
 import subprocess
 import sys
@@ -114,3 +115,36 @@ class FileInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "metadata limit"):
             bounded_output([sys.executable, "-c", "print('x' * 1000)"], limit=100)
         self.assertEqual(bounded_output([sys.executable, "-c", "print('ok')"]), b"ok\n")
+
+    def test_contents_are_exact_git_blobs_with_length_and_hash_binding(self):
+        result = self.build(content_paths=["dir/present"], content_allowlist_sha256="a" * 64)
+        entry = result["contents"][0]
+        self.assertEqual(base64.b64decode(entry["base64"]), b"fixture")
+        self.assertEqual(entry["byte_length"], 7)
+        self.assertEqual(entry["sha256"], hashlib.sha256(b"fixture").hexdigest())
+        self.assertEqual(entry["blob_id"], self.git("rev-parse", "HEAD:dir/present"))
+        self.assertEqual(result["content_allowlist_sha256"], "a" * 64)
+        self.assertNotIn("Case", [item["path"] for item in result["contents"]])
+        (self.source / "dir" / "present").write_text("changed after snapshot")
+        self.assertEqual(base64.b64decode(entry["base64"]), b"fixture")
+
+    def test_content_read_ignores_git_replace_and_rejects_missing_symlink_and_limits(self):
+        original = self.git("rev-parse", "HEAD:dir/present")
+        replacement = subprocess.check_output(["git", "-C", str(self.source), "hash-object", "-w", "--stdin"],
+                                              input=b"replacement").decode().strip()
+        self.git("replace", original, replacement)
+        result = self.build(content_paths=["dir/present"], content_allowlist_sha256="a" * 64)
+        self.assertEqual(base64.b64decode(result["contents"][0]["base64"]), b"fixture")
+        for paths in (["missing"], ["dir"], ["../escape"], ["Case", "Case"]):
+            with self.subTest(paths=paths), self.assertRaises(ValueError):
+                self.build(content_paths=paths, content_allowlist_sha256="a" * 64)
+        (self.source / "link").symlink_to("dir/present")
+        self.git("add", "link")
+        self.git("commit", "-qm", "link")
+        with self.assertRaisesRegex(ValueError, "regular source-tree"):
+            self.build(content_paths=["link"], content_allowlist_sha256="a" * 64)
+        (self.source / "large").write_bytes(b"x" * 65537)
+        self.git("add", "large")
+        self.git("commit", "-qm", "large")
+        with self.assertRaisesRegex(ValueError, "raw byte limit"):
+            self.build(content_paths=["large"], content_allowlist_sha256="a" * 64)

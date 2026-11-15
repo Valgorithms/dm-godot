@@ -82,10 +82,14 @@ public sealed class DmRuntime {
     private CompiledData Data => Project.Data;
 
     private readonly DmFileInventory? _fileInventory;
+    private readonly DmTextFileSnapshot? _textFiles;
 
-    public DmRuntime(CompiledProject project, DmFileInventory? fileInventory = null) {
+    public DmRuntime(CompiledProject project, DmFileInventory? fileInventory = null, DmTextFileSnapshot? textFiles = null) {
         Project = project;
         _fileInventory = fileInventory;
+        if (textFiles is not null && !ReferenceEquals(fileInventory, textFiles.Inventory))
+            throw new CompatibilityException("Text snapshot must share the configured file inventory identity.");
+        _textFiles = textFiles;
         _globals = new DmValue[Data.Globals?.GlobalCount ?? 0];
         foreach (var (id, value) in Data.Globals?.GlobalValues ?? []) {
             if (id < 0 || id >= _globals.Length) throw new CompatibilityException($"Invalid global index {id}.");
@@ -468,6 +472,27 @@ public sealed class DmRuntime {
         }
     }
 
+    private DmValue FileText(DmValue value) {
+        if (value.Value is not (string or DmResource)) return DmValue.Null;
+        var path = value.Value is string text ? text : ((DmResource)value.Value).Path;
+        if (path is null) throw new CompatibilityException("Generated resource text without attached bytes is not implemented.");
+        if (path.Length == 0) return DmValue.Null;
+        if (_textFiles is null)
+            throw new CompatibilityException("file2text requires an explicitly configured allowlisted text snapshot.");
+        if (path.Length > DmFileInventory.MaximumPathLength)
+            throw new CompatibilityException("Text snapshot path length limit exceeded.");
+        var work = 1L + (long)path.Length * path.Length;
+        if (work > _budget) throw new CompatibilityException("file2text path work budget exhausted.");
+        _budget -= (int)work;
+        var result = _textFiles.ReadText(path);
+        // Strings are immutable and decoded once. Still charge every returned code
+        // unit so repeated calls cannot evade the shared execution work bound.
+        if (result is null) return DmValue.Null;
+        if (result.Length > _budget) throw new CompatibilityException("file2text returned-text work budget exhausted.");
+        _budget -= result.Length;
+        return new(result);
+    }
+
     private DmValue FileExists(DmValue value) {
         // Pinned native returns null for non-path arguments even without a capability.
         var path = value.Value switch { string text => text, DmResource resource => resource.Path, _ => null };
@@ -578,6 +603,8 @@ public sealed class DmRuntime {
                             frame.Push(new(TypesOf(args)));
                         } else if (proc.OwningTypeId == 0 && proc.Name == "fexists" && proc.Bytecode is not { Length: > 0 }) {
                             frame.Push(FileExists(args.Length == 0 ? DmValue.Null : args[0]));
+                        } else if (proc.OwningTypeId == 0 && proc.Name == "file2text" && proc.Bytecode is not { Length: > 0 }) {
+                            frame.Push(FileText(args.Length == 0 ? DmValue.Null : args[0]));
                         } else {
                             if (proc.Bytecode is not { Length: > 0 } && !CanExecuteEmpty(proc))
                                 throw new CompatibilityException($"Native proc '{proc.Name}' is not implemented.");

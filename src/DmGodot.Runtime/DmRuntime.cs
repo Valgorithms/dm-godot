@@ -27,6 +27,7 @@ public sealed class DmRuntime {
     private readonly Dictionary<DmObject, MapLocation> _mapLocations = [];
     private readonly HashSet<DmObject> _multiLevelAreas = [];
     private readonly List<DmObject> _mapMovableNewOrder = [];
+    private readonly HashSet<DmObject> _mapMovableNameOverrides = [];
     private DmObject? _defaultArea;
     private sealed record MapLocation(int X, int Y, int Z, DmObject? Loc);
     // Native fields require appearance, containment or connection adapters, not raw compiler defaults.
@@ -302,9 +303,8 @@ public sealed class DmRuntime {
                     var entities = new List<DmObject>();
                     foreach (var entity in cell.Objects) {
                         RequireMapType(entity.Type, "/atom/movable", "entity");
-                        if (entity.VarOverrides is { Count: > 0 })
-                            throw new CompatibilityException($"Map entity variable overrides are not implemented: {Data.Types[entity.Type].Path} [{string.Join(", ", entity.VarOverrides.Keys.Order(StringComparer.Ordinal))}].");
                         var instance = CreateInstance(entity.Type, initializeLater: true);
+                        ApplyMapEntityOverrides(instance, entity.VarOverrides);
                         if (ResolveInitializer(entity.Type) is { } initializer)
                             ValidateMapInitializer(instance, initializer, new HashSet<Procedure>(), "Movable");
                         // Validate every mapped initializer before Boot can produce effects.
@@ -360,6 +360,28 @@ public sealed class DmRuntime {
             if (Data.Types[current.Value].Path == ancestorPath) return true;
         return false;
     }
+    private void ApplyMapEntityOverrides(DmObject instance, Dictionary<string, JsonElement>? overrides) {
+        foreach (var (name, raw) in (overrides ?? []).OrderBy(pair => pair.Key, StringComparer.Ordinal)) {
+            var category = raw.ValueKind.ToString();
+            if (raw.ValueKind == JsonValueKind.Object && raw.TryGetProperty("type", out var tag) && tag.ValueKind == JsonValueKind.Number && tag.TryGetInt32(out var kind))
+                category = $"compiler tag {kind}";
+            CompatibilityException Failure(string reason, Exception? inner = null) =>
+                new($"Map entity override '{name}' ({category}) on {instance.TypePath}: {reason}.", inner);
+            if (name is "type" or "parent_type" or "vars" or "tag")
+                throw Failure("metadata/tag override is not implemented");
+            if (!instance.Variables.ContainsKey(name))
+                throw Failure("unknown or non-instance field is not implemented");
+            for (int? typeId = instance.TypeId; typeId is not null; typeId = Data.Types[typeId.Value].Parent)
+                if (Data.Types[typeId.Value].ConstVariables?.Contains(name, StringComparer.Ordinal) == true)
+                    throw Failure("const field override is not implemented");
+            if (ProtectedMapField(instance, name) && name is not ("name" or "icon_state"))
+                throw Failure("native field override is not implemented");
+            try { instance.Variables[name] = ConvertValue(raw); }
+            catch (CompatibilityException ex) { throw Failure(ex.Message, ex); }
+            if (name == "name") _mapMovableNameOverrides.Add(instance);
+        }
+    }
+
     private void RequireMapType(int typeId, string ancestorPath, string role) {
         if (!IsSubtypeOf(typeId, ancestorPath))
             throw new CompatibilityException($"Map {role} must be a subtype of {ancestorPath}.");
@@ -806,6 +828,18 @@ public sealed class DmRuntime {
             if (IsSubtypeOf(obj.TypeId, "/turf")) {
                 if (name == "name") return obj.Variables.GetValueOrDefault("name").Value as string ?? "";
                 if (name == "layer") return TurfLayer(obj);
+            }
+            if (IsSubtypeOf(obj.TypeId, "/atom/movable")) {
+                if (name == "name") {
+                    var raw = obj.Variables.GetValueOrDefault(name);
+                    // Upstream fills null type-definition names before map overrides.
+                    // Explicit null map names instead pass through the native setter.
+                    if (raw.IsNull && !_mapMovableNameOverrides.Contains(obj))
+                        return obj.TypePath[(obj.TypePath.LastIndexOf('/') + 1)..].Replace('_', ' ');
+                    return raw.Value as string ?? "";
+                }
+                if (name == "icon_state")
+                    return obj.Variables.GetValueOrDefault(name).Value is string state ? new(state) : DmValue.Null;
             }
             if (UnsupportedMapField(obj, name)) throw new CompatibilityException($"Map atom.{name} is not implemented.");
             if (_multiLevelAreas.Contains(obj) && name is ("x" or "y" or "z"))

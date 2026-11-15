@@ -1,0 +1,9 @@
+"a" = (/obj/base/child{name = "A"; icon_state = "missing-state"; scalar = 11; items = 42; strict = null},/turf/plain,/area/plain)
+"b" = (/obj/base/child{name = "B"; icon_state = ""; scalar = 12; items = 43; strict = 44},/turf/plain,/area/plain)
+"c" = (/obj/base/child,/turf/plain,/area/plain)
+"d" = (/obj/base/child/replaced{items = 0},/turf/plain,/area/plain)
+"e" = (/obj/null_name,/turf/plain,/area/plain)
+
+(1,1,1) = {"
+abcde
+"}

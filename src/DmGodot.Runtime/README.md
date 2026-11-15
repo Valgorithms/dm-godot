@@ -35,6 +35,21 @@ revision and opcode hash are checked separately by the build tooling and loader.
   Reads use the final effective value after per-cell overrides. Turf layer writes,
   movable/area layer reads,
   rendering order, plane interactions and appearance propagation remain unsupported.
+- Applies scalar DMM overrides to each mapped movable's declared instance variables
+  before its pure type initializer and New; initializer assignments can replace
+  overrides. Per-instance dictionaries and fresh initializer lists remain isolated,
+  and shared type defaults are untouched. Optional compiler ConstVariables metadata
+  is retained to reject inherited const overrides. Global/non-instance variables,
+  unknown fields, tag/type/parent_type/vars and native fields remain rejected except
+  name/icon_state. Rejecting unknown fields is stricter than upstream's ignore behavior.
+- Static mapped movable name/icon_state overrides and reads preserve their raw values.
+  Native name reads keep strings and normalize other overridden values to ""; native
+  icon_state reads keep strings (including empty) and normalize nonstrings to null.
+  Null type-default names without map overrides use the final path component with
+  underscores replaced by spaces, matching upstream's type-name fallback. No icon
+  loading/state validation is implied. Only mapped movables gain icon_state reads;
+  existing turf behavior stays unchanged. Native writes, rendering/appearance
+  propagation and object stringification remain unsupported.
 - Implements coordinate `locate(x, y, z)` using the retained turf index. Repeated
   lookups return the same object. Finite numbers truncate toward zero before bounds
   checking; non-numbers coerce to zero, and invalid/out-of-bounds coordinates return
@@ -117,7 +132,7 @@ fixture/testing entry point, not a complete BYOND verb dispatch implementation.
 This is **not a complete BYOND world runtime**. Static map objects now retain identity;
 the host's initial avatar/movement protocol does not execute DM Login, Move,
 Enter/Exit, or collision callbacks. Executable world/turf type
-initializers and area/movable initializers outside the local-literal subset, sparse/overlapping maps, and map entity/area overrides are rejected
+initializers and area/movable initializers outside the local-literal subset, sparse/overlapping maps, unsupported map entity overrides and all map area overrides are rejected
 rather than silently ignored. Static identities are eagerly allocated before New;
 contents/type enumeration and dynamic atom creation remain unavailable, so this
 slice does not claim general construction timing parity. The default area is retained
@@ -125,7 +140,7 @@ and receives New even when no cell uses it, provided the map has at least one z 
 Single-z area coordinates use the lowest turf by y, then x; coordinate reads on areas
 spanning multiple z levels fail explicitly because pinned upstream cross-z cache behavior
 needs separate parity investigation. Their identity and null loc remain available. Native atom/appearance, movable and mob fields beyond loc/coordinates/type metadata
-remain explicit errors, except static turf name/layer reads; this includes contents, color,
+remain explicit errors, except static turf name/layer and static movable name/icon_state reads; this includes contents, color,
 bounds and connection/vision fields.
 This avoids exposing unnormalized compiler defaults as runtime behavior. Mutation of
 those fields remains rejected so retained objects cannot silently diverge from snapshots.
@@ -166,7 +181,9 @@ python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/movable-init.dme
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/movable-init.dme --output build/movable-init-optimized.json --optimize
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/alist.dme --output build/alist.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/alist.dme --output build/alist-optimized.json --optimize
-dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json build/area-init.json build/area-init-optimized.json build/turf-name.json build/movable-init.json build/movable-init-optimized.json build/alist.json build/alist-optimized.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/entity-overrides.dme --output build/entity-overrides.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/entity-overrides.dme --output build/entity-overrides-optimized.json --optimize
+dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json build/area-init.json build/area-init-optimized.json build/turf-name.json build/movable-init.json build/movable-init-optimized.json build/alist.json build/alist-optimized.json build/entity-overrides.json build/entity-overrides-optimized.json
 ```
 
 Tests exercise code emitted by the real compiler, scheduler interactions, map
@@ -203,3 +220,14 @@ Strict-list behavior additionally follows
 and `DMOpcodeHandlers.CreateStrictAssociativeList` at the same revision.
 Bare `null = value` in source is parsed as the string key "null"; `(null) = value`
 retains a true null key. Both forms are covered by compiler-mode fixtures.
+
+Map entity override order follows pinned `DreamMapManager.CreateMapObjectDefinition`
+and `LoadMapObjectsAndMobs`: overrides affect a cloned definition before construction,
+type initialization, native location initialization and New. This runtime accepts
+only the bounded static subset described above; it does not implement dynamic map
+loading, complete native initialization or constant-field override semantics.
+Name/icon_state normalization follows
+[AtomManager.SetAppearanceVar/GetAppearanceVar](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/AtomManager.cs).
+Original type definitions remain unmodified; this slice does not add runtime
+`initial()` support. Unsupported override diagnostics include type, field and value
+category without printing user values.

@@ -49,6 +49,8 @@ public sealed class CompiledProject {
         if (Data.Procs.Any(proc => proc is null || string.IsNullOrEmpty(proc.Name))) Invalid("Procs contains a null entry or name");
         foreach (var type in Data.Types) {
             if (type.Procs?.Any(chain => chain is null) == true) Invalid($"Type {type.Path} has a null procedure chain");
+            if (type.ConstVariables?.Any(name => string.IsNullOrEmpty(name)) == true)
+                Invalid($"Type {type.Path} has a null or empty const variable name");
             ValidateValues(type.Variables, $"type {type.Path}");
         }
         foreach (var proc in Data.Procs.Append(Data.GlobalInitProc).OfType<Procedure>()) {
@@ -193,6 +195,7 @@ internal sealed class TypeDefinition {
     public required string Path { get; init; }
     public int? Parent { get; init; }
     public int? InitProc { get; init; }
+    public string[]? ConstVariables { get; init; }
     public int[][]? Procs { get; init; }
     public Dictionary<string, JsonElement>? Variables { get; init; }
 }

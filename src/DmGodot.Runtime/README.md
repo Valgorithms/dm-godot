@@ -231,3 +231,11 @@ Name/icon_state normalization follows
 Original type definitions remain unmodified; this slice does not add runtime
 `initial()` support. Unsupported override diagnostics include type, field and value
 category without printing user values.
+
+Instance variable storage shares immutable, eagerly validated type defaults until
+the first instance write or public Variables access. Either event creates the full
+independent ordinal dictionary in the existing key order. The public getter returns
+the same mutable Dictionary thereafter; host Remove/Clear/Add and DM writes share
+that dictionary without restoring removed defaults or metadata. Initializer-created
+lists remain per-instance. This defers copies for untouched objects, not validation
+or initializer execution, and fully exposing all dictionaries pays the copy cost.

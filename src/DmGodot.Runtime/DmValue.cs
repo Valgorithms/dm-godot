@@ -11,7 +11,7 @@ public readonly record struct DmValue(object? Value) {
     public float Number => Value switch { null => 0, float n => n, _ => throw new CompatibilityException($"Expected a DM number, got {Value?.GetType().Name}.") };
     public override string ToString() => Value switch {
         null => "", float n => n.ToString("G9", CultureInfo.InvariantCulture), string s => s,
-        DmTypeReference t => t.Path, DmResource r => r.Path, DmObject o => o.Variables.TryGetValue("name", out var n) && !n.IsNull ? n.ToString() : o.TypePath,
+        DmTypeReference t => t.Path, DmResource r => r.Path, DmObject o => o.TryGetVariable("name", out var n) && !n.IsNull ? n.ToString() : o.TypePath,
         DmList => throw new CompatibilityException("List stringification is not implemented."),
         DmAssocList => throw new CompatibilityException("Strict associative list stringification is not implemented."),
         _ => throw new CompatibilityException($"Unsupported DM value {Value.GetType().Name}.")
@@ -25,21 +25,48 @@ public sealed record DmResource(string Path);
 public sealed class DmObject {
     public int TypeId { get; }
     public string TypePath { get; }
-    public Dictionary<string, DmValue> Variables { get; }
+    private Dictionary<string, DmValue>? _variables;
+    private IReadOnlyDictionary<string, DmValue>? _defaults;
+    private readonly DmValue _type;
+    private readonly DmValue _parentType;
+
+    // Preserve the public mutable Dictionary API and stable alias identity. Once
+    // exposed or written, this dictionary is authoritative, even after Clear/Remove.
+    public Dictionary<string, DmValue> Variables => MaterializeVariables();
+
     public DmObject(int typeId, string typePath) {
         TypeId = typeId; TypePath = typePath;
-        Variables = new(StringComparer.Ordinal);
+        _variables = new(StringComparer.Ordinal);
     }
     internal DmObject(int typeId, string typePath, IReadOnlyDictionary<string, DmValue> defaults,
         DmValue type, DmValue parentType) {
         TypeId = typeId; TypePath = typePath;
-        var count = defaults.Count + (defaults.ContainsKey("type") ? 0 : 1) + (defaults.ContainsKey("parent_type") ? 0 : 1);
-        Variables = new(count, StringComparer.Ordinal);
-        foreach (var pair in defaults) Variables.Add(pair.Key, pair.Value);
-        // Add metadata only after inherited variables, preserving dictionary order.
-        Variables["type"] = type;
-        Variables["parent_type"] = parentType;
+        _defaults = defaults;
+        _type = type;
+        _parentType = parentType;
     }
+    private Dictionary<string, DmValue> MaterializeVariables() {
+        if (_variables is not null) return _variables;
+        var defaults = _defaults!;
+        var count = defaults.Count + (defaults.ContainsKey("type") ? 0 : 1) + (defaults.ContainsKey("parent_type") ? 0 : 1);
+        var variables = new Dictionary<string, DmValue>(count, StringComparer.Ordinal);
+        foreach (var pair in defaults) variables.Add(pair.Key, pair.Value);
+        // Existing metadata keys keep their positions; missing keys append in order.
+        variables["type"] = _type;
+        variables["parent_type"] = _parentType;
+        _variables = variables;
+        _defaults = null;
+        return variables;
+    }
+    internal bool TryGetVariable(string name, out DmValue value) {
+        if (_variables is not null) return _variables.TryGetValue(name, out value);
+        if (name == "type") { value = _type; return true; }
+        if (name == "parent_type") { value = _parentType; return true; }
+        return _defaults!.TryGetValue(name, out value);
+    }
+    internal DmValue GetVariableOrDefault(string name) => TryGetVariable(name, out var value) ? value : DmValue.Null;
+    internal bool HasVariable(string name) => TryGetVariable(name, out _);
+    internal void SetVariable(string name, DmValue value) => MaterializeVariables()[name] = value;
 }
 /// <summary>Ordered list entries plus associative keys, distinct from a host dictionary.</summary>
 public sealed class DmList {

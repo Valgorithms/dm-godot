@@ -771,6 +771,101 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath })
             "Host mutation leaked to another or future object.");
     }));
 
+
+foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
+    tests.Add(($"typesof follows actual parent preorder, concatenates duplicates and returns fresh lists: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var definitions = json["Types"]!.AsArray();
+        var root = TypeId(json, "/datum/type_family");
+        // Force an interleaved serialized-ID graph, independent of compiler ordering.
+        var childIds = new[] { "/datum/type_family/zeta", "/datum/type_family/alpha",
+            "/datum/type_family/zeta/deep", "/datum/type_elsewhere" }.Select(name => TypeId(json, name)).Order().ToArray();
+        foreach (var id in childIds) definitions[id]!["Parent"] = root;
+        definitions[childIds[^1]]!["Parent"] = childIds[0];
+        int[] Preorder(int id) => new[] { id }.Concat(Enumerable.Range(0, definitions.Count)
+            .Where(child => definitions[child]!["Parent"]?.GetValue<int>() == id)
+            .SelectMany(Preorder)).ToArray();
+        var expected = Preorder(root);
+        var elsewhere = TypeId(json, "/datum/type_elsewhere");
+        Check(expected.Contains(elsewhere) && !expected.SequenceEqual(expected.Order()), "Fixture must distinguish parent DFS from path prefixes and flat IDs.");
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        var type = new DmValue(new DmTypeReference(root, "/datum/type_family"));
+        DmList Result() => (DmList)runtime.GetGlobal("types_result").Value!;
+        int[] Ids() => Result().Values.Select(value => ((DmTypeReference)value.Value!).Id).ToArray();
+        runtime.InvokeGlobal("test_typesof", type);
+        Check(Ids().SequenceEqual(expected), "Root-inclusive actual-parent DFS order changed.");
+        var first = Result();
+        runtime.InvokeGlobal("test_typesof", "/datum/type_family");
+        Check(Ids().SequenceEqual(expected) && !ReferenceEquals(first, Result()), "String lookup or fresh list identity changed.");
+        first.Values.Clear();
+        Check(Ids().SequenceEqual(expected), "Mutating an earlier result changed a new result.");
+        var instance = new DmObject(root, "/datum/type_family");
+        instance.Variables["type"] = new DmValue(new DmTypeReference(elsewhere, "/datum/type_elsewhere"));
+        runtime.InvokeGlobal("test_typesof", new DmValue(instance));
+        Check(Ids().SequenceEqual(expected), "Object type identity was replaced by public field metadata.");
+        runtime.InvokeGlobal("test_typesof_multiple", type, new DmValue(new DmTypeReference(elsewhere, "/datum/type_elsewhere")));
+        Check(Ids().SequenceEqual(expected.Concat(Preorder(elsewhere)).Concat(expected)), "Argument order or duplicate retention changed.");
+        runtime.InvokeGlobal("test_typesof_empty");
+        var empty = Result();
+        Check(empty.Values.Count == 0, "No-argument typesof should be empty.");
+        runtime.InvokeGlobal("test_typesof_ignored", new DmValue(new DmList()));
+        Check(Result().Values.Count == 0 && !ReferenceEquals(empty, Result()), "Primitive/list arguments must be ignored without sharing empty results.");
+        runtime.InvokeGlobal("test_typesof", new DmValue(new DmTypeReference(0, definitions[0]!["Path"]!.GetValue<string>())));
+        Check(Ids().SequenceEqual(Preorder(0)), "Root type identity must remain supported independently of root string lookup.");
+    }));
+    foreach (var value in new[] { "/", "", "/datum/type_family/", "/DATUM/type_family", "/missing_type" })
+        tests.Add(($"typesof rejects unknown exact string {value}: {artifact}", () => {
+            var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+            Throws(() => runtime.InvokeGlobal("test_typesof", value), "typesof unknown type path");
+        }));
+    foreach (var value in new[] { "/datum/type_family/proc", "/datum/type_family/verb" })
+        tests.Add(($"typesof rejects unsupported proc/verb enumeration {value}: {artifact}", () => {
+            var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+            Throws(() => runtime.InvokeGlobal("test_typesof", value), "typesof proc/verb");
+        }));
+    tests.Add(($"typesof retains strict-list and malformed identity guards: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        Throws(() => runtime.InvokeGlobal("test_typesof", new DmValue(new DmAssocList())), "strict associative");
+        Throws(() => runtime.InvokeGlobal("test_typesof", new DmValue(new DmTypeReference(-1, "/invalid"))), "invalid type identity");
+        Throws(() => runtime.InvokeGlobal("test_typesof", new DmValue(new DmObject(int.MaxValue, "/invalid"))), "invalid type identity");
+        Throws(() => runtime.InvokeGlobal("test_typesof", new DmValue(new object())), "argument representation");
+    }));
+    tests.Add(($"typesof does not intercept an executable user procedure body: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var proc = json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "typesof");
+        proc!["Bytecode"] = Convert.ToBase64String(new byte[] { (byte)DreamProcOpcode.PushFloat, 0, 0, 224, 64, (byte)DreamProcOpcode.Return });
+        proc["SourceInfo"] = new JsonArray();
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        runtime.InvokeGlobal("test_typesof", DmValue.Null);
+        Check(runtime.GetGlobal("types_result").Number == 7, "Native dispatch replaced executable code.");
+    }));
+    tests.Add(($"typesof native work is instruction bounded before publishing results: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var root = TypeId(json, "/datum/type_family");
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())) { InstructionBudget = 64 };
+        runtime.Boot();
+        Throws(() => runtime.InvokeGlobal("test_typesof", new DmValue(new DmTypeReference(root, "/datum/type_family"))), "budget");
+        Check(runtime.GetGlobal("types_result").IsNull, "Failed native work published a partial result.");
+    }));
+    tests.Add(($"typesof output lists share the public-boundary allocation budget: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var root = TypeId(json, "/datum/type_family");
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())) { InstructionBudget = 10_000_000 };
+        runtime.Boot();
+        var type = new DmValue(new DmTypeReference(root, "/datum/type_family"));
+        Throws(() => runtime.InvokeGlobal("test_typesof_repeat", type, 0, 20_000), "List allocation budget");
+        var last = (DmList)runtime.GetGlobal("types_result").Value!;
+        Check(last.Values.Count == 5, "Exhaustion partially published a result.");
+        runtime.InvokeGlobal("test_typesof", type);
+        Check(((DmList)runtime.GetGlobal("types_result").Value!).Values.Count == 5, "New public boundary failed to reset allocation budget.");
+    }));
+    tests.Add(($"typesof does not silently add list subtraction: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        Throws(() => runtime.InvokeGlobal("test_typesof_subtract", new DmValue(new DmTypeReference(TypeId(json, "/datum/type_family"), "/datum/type_family"))), "Expected a DM number");
+    }));
+}
+
 var movableInitPath = args.Length > 7 ? args[7] : "build/movable-init.json";
 var movableInitOptimizedPath = args.Length > 8 ? args[8] : "build/movable-init-optimized.json";
 foreach (var artifact in new[] { movableInitPath, movableInitOptimizedPath }) {

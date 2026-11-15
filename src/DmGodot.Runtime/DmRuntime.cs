@@ -554,6 +554,8 @@ public sealed class DmRuntime {
                             var delay = args.Length > 0 ? args[0].Number : 0;
                             if (!float.IsFinite(delay)) throw new CompatibilityException("Non-finite sleep delay.");
                             if (Suspend(fiber, Math.Max(0, delay))) return;
+                        } else if (proc.OwningTypeId == 0 && proc.Name == "typesof" && proc.Bytecode is not { Length: > 0 }) {
+                            frame.Push(new(TypesOf(args)));
                         } else {
                             if (proc.Bytecode is not { Length: > 0 } && !CanExecuteEmpty(proc))
                                 throw new CompatibilityException($"Native proc '{proc.Name}' is not implemented.");
@@ -723,6 +725,66 @@ public sealed class DmRuntime {
             } catch (CompatibilityException ex) { throw Fault(frame, offset, ex.Message, ex); }
             catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentOutOfRangeException or InvalidOperationException or KeyNotFoundException) { throw Fault(frame, offset, $"Malformed or unsupported execution: {ex.Message}", ex); }
         }
+    }
+
+
+    private DmList TypesOf(DmValue[] arguments) {
+        void Work(int count = 1) {
+            if (count < 0 || count > _budget)
+                throw new CompatibilityException("Instruction budget exhausted during typesof.");
+            _budget -= count;
+        }
+        var roots = new List<int>();
+        foreach (var argument in arguments) {
+            Work();
+            int? root = null;
+            switch (argument.Value) {
+                case DmTypeReference type: root = type.Id; break;
+                case DmObject instance: root = instance.TypeId; break;
+                case DmAssocList:
+                    throw new CompatibilityException("typesof strict associative list identity is not implemented.");
+                case string path:
+                    if (path.EndsWith("/proc", StringComparison.Ordinal) || path.EndsWith("/verb", StringComparison.Ordinal))
+                        throw new CompatibilityException("typesof proc/verb paths are not implemented.");
+                    // Pinned ObjectTree's exact path dictionary excludes root ID 0.
+                    for (var id = 1; id < Data.Types.Length; id++) {
+                        Work();
+                        if (Data.Types[id].Path == path) { root = id; break; }
+                    }
+                    if (root is null) throw new CompatibilityException($"typesof unknown type path '{path}'.");
+                    break;
+                case null or float or DmResource or DmList: break;
+                default: throw new CompatibilityException("typesof argument representation is not implemented.");
+            }
+            if (root is int typeId) {
+                if (typeId < 0 || typeId >= Data.Types.Length)
+                    throw new CompatibilityException("typesof invalid type identity.");
+                roots.Add(typeId);
+            }
+        }
+        ChargeListAllocation(1);
+        var result = new DmList();
+        if (roots.Count == 0) return result;
+        // Index only actual Parent edges, preserving ascending serialized child IDs.
+        // Debit before allocating the index. No native work can bypass the budget.
+        Work(Data.Types.Length);
+        var children = new List<int>?[Data.Types.Length];
+        for (var id = 0; id < Data.Types.Length; id++)
+            if (Data.Types[id].Parent is int parent)
+                (children[parent] ??= []).Add(id);
+        var pending = new Stack<int>();
+        foreach (var root in roots) {
+            pending.Push(root);
+            while (pending.TryPop(out var id)) {
+                Work();
+                ChargeListAllocation(1);
+                result.Values.Add(new(new DmTypeReference(id, Data.Types[id].Path)));
+                if (children[id] is { } descendants)
+                    for (var child = descendants.Count - 1; child >= 0; child--)
+                        pending.Push(descendants[child]);
+            }
+        }
+        return result;
     }
 
     private void ChargeListAllocation(long count) {

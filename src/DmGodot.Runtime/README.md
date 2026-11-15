@@ -239,3 +239,17 @@ the same mutable Dictionary thereafter; host Remove/Clear/Add and DM writes shar
 that dictionary without restoring removed defaults or metadata. Initializer-created
 lists remain per-instance. This defers copies for untouched objects, not validation
 or initializer execution, and fully exposing all dictionaries pays the copy cost.
+
+The native root typesof stub supports type references, object identities and exact
+type-path strings. It returns a fresh ordinary list including each root, followed
+by actual Parent descendants in preorder with ascending serialized child IDs;
+arguments concatenate and preserve duplicates. Null, ordinary lists, numbers and
+resources are ignored as in the pin. Exact string lookup excludes root ID zero;
+unknown strings fail. Proc/verb paths and strict associative list identities remain
+explicit capability errors. User-defined procedure bodies are not intercepted.
+Type-index construction, string searches, arguments and traversal charge the
+instruction budget; result objects/slots charge the existing aggregate list budget
+before allocation/growth. No type defaults, constructors or callbacks execute.
+List subtraction remains unsupported. Semantics follow pinned
+[NativeRoot.typesof](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/Native/DreamProcNativeRoot.cs)
+and ObjectTree descendant traversal; this is not complete reflection support.

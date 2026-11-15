@@ -228,8 +228,7 @@ only the bounded static subset described above; it does not implement dynamic ma
 loading, complete native initialization or constant-field override semantics.
 Name/icon_state normalization follows
 [AtomManager.SetAppearanceVar/GetAppearanceVar](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/AtomManager.cs).
-Original type definitions remain unmodified; this slice does not add runtime
-`initial()` support. Unsupported override diagnostics include type, field and value
+Original type definitions remain unmodified; native `initial()` fields remain unsupported. Unsupported override diagnostics include type, field and value
 category without printing user values.
 
 Instance variable storage shares immutable, eagerly validated type defaults until
@@ -291,3 +290,22 @@ These contracts follow pinned
 [DMOpcodeHandlers](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/DMOpcodeHandlers.cs)
 GetContentsEnumerator/CreateListEnumerator/Enumerate/DestroyEnumerator,
 DreamEnumerators' array cursor, and DMProc's spawn-state copy constructor.
+
+Initial (0x47) supports string-key queries on type references and object identities
+for declared immutable instance defaults. It walks original serialized type ancestry,
+preserving inherited values and explicit nulls, without consulting current public
+Variables, cloned map overrides, the instance-default cache, or any initializer.
+A compiler null placeholder remains null even if an initializer would later assign
+a list/object/effectful result. Missing fields and null owners return null.
+
+Optional GlobalVariables metadata is retained and validated to identify unsupported
+static/global queries. Complete instance Variables precedence is preserved over
+static mappings; root global mappings are not inherited. Numeric-index forms,
+list/primitive owners, native/metadata fields (including atom name/text) and requested
+mutable/procedure encoded defaults remain explicit errors. Other unrelated defaults
+and initializer bytecode are not evaluated. Ancestry visits consume the instruction
+budget before traversal work; malformed type identities are rejected.
+This subset follows pinned
+[DMOpcodeHandlers.Initial](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/DMOpcodeHandlers.cs)
+and TreeEntry.TryGetTypeVar. It does not implement all forms of initial(), including
+native loader-normalized defaults or current static-variable access.

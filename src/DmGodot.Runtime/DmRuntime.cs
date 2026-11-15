@@ -728,6 +728,10 @@ public sealed class DmRuntime {
                         frame.Push(new(list)); break;
                     }
                     case DreamProcOpcode.DereferenceIndex: { var index = frame.Pop(); frame.Push(ReadIndex(frame.Pop(), index)); break; }
+                    case DreamProcOpcode.Initial: {
+                        var key = frame.Pop(); var owner = frame.Pop();
+                        frame.Push(InitialValue(owner, key)); break;
+                    }
                     case DreamProcOpcode.DereferenceField: { var name = Project.String(frame.Reader.Int()); frame.Push(Field(frame.Pop(), name)); break; }
                     case DreamProcOpcode.PushRefAndDereferenceField: { var value = Get(frame, frame.Reader.Reference()); frame.Push(Field(value, Project.String(frame.Reader.Int()))); break; }
                     case DreamProcOpcode.IsNull: frame.Push(frame.Pop().IsNull ? 1 : 0); break;
@@ -975,6 +979,55 @@ public sealed class DmRuntime {
             _ => throw new CompatibilityException($"Call argument mode {kind} is not implemented.")
         };
     }
+
+    private DmValue InitialValue(DmValue owner, DmValue key) {
+        if (key.Value is float)
+            throw new CompatibilityException("initial numeric indexing is not implemented.");
+        if (key.Value is not string name)
+            throw new CompatibilityException("initial requires a string field name.");
+        if (owner.IsNull) return DmValue.Null;
+        var typeId = owner.Value switch {
+            DmTypeReference type => type.Id,
+            DmObject instance => instance.TypeId,
+            _ => throw new CompatibilityException("initial requires a type or object owner; list/primitive forms are not implemented.")
+        };
+        if (typeId < 0 || typeId >= Data.Types.Length)
+            throw new CompatibilityException("initial has invalid type identity.");
+        JsonElement? declared = null;
+        var hasStatic = false;
+        var atom = false; var movable = false; var mob = false; var world = false; var native = false;
+        for (int? current = typeId; current is not null; current = Data.Types[current.Value].Parent) {
+            if (_budget <= 0) throw new CompatibilityException("Instruction budget exhausted during initial ancestry lookup.");
+            _budget--;
+            var type = Data.Types[current.Value];
+            if (declared is null && type.Variables?.TryGetValue(name, out var raw) == true) declared = raw;
+            // Root global mappings are not inherited by upstream object definitions.
+            if ((current.Value != 0 || typeId == 0) && type.GlobalVariables?.ContainsKey(name) == true) hasStatic = true;
+            atom |= type.Path == "/atom"; movable |= type.Path == "/atom/movable";
+            mob |= type.Path == "/mob"; world |= type.Path == "/world";
+            native |= type.Path is "/client" or "/list" or "/alist" or "/savefile" or "/icon" or
+                "/matrix" or "/regex" or "/filter" or "/sound" or "/image" or "/mutable_appearance" or
+                "/generator" or "/particles" or "/database" or "/database/query" or
+                "/vector" or "/callee" or "/exception";
+        }
+        if (native || name is "type" or "parent_type" or "vars" or "tag" ||
+            (atom && (UnsupportedAtomFields.Contains(name) || name is "loc" or "x" or "y" or "z")) ||
+            (movable && UnsupportedMovableFields.Contains(name)) || (mob && UnsupportedMobFields.Contains(name)) ||
+            (world && BuiltinWorldFields.Contains(name)))
+            throw new CompatibilityException($"initial native/metadata field '{name}' is not implemented.");
+        // Original instance Variables take precedence over any static mapping,
+        // even when that mapping is declared on a more-derived type.
+        if (declared is JsonElement value) {
+            var result = ConvertValue(value);
+            if (result.Value is not (null or float or string or DmTypeReference or DmResource))
+                throw new CompatibilityException($"initial mutable default '{name}' is not implemented.");
+            return result;
+        }
+        if (hasStatic)
+            throw new CompatibilityException($"initial static/global field '{name}' is not implemented.");
+        return DmValue.Null;
+    }
+
     private DmValue Field(DmValue owner, string name) {
         if (owner.Value is DmList list && name == "len") return list.Values.Count;
         if (owner.Value is DmAssocList associative) {

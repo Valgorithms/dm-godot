@@ -1197,6 +1197,135 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
     }));
 }
 
+
+foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
+    JsonNode InitialJson() {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var index = Array.FindIndex(json["Globals"]!["Names"]!.AsArray().Select(n => n!.GetValue<string>()).ToArray(), n => n == "initial_result");
+        var code = new List<byte> {
+            (byte)DreamProcOpcode.PushReferenceValue, 8, 0,
+            (byte)DreamProcOpcode.PushReferenceValue, 8, 1,
+            (byte)DreamProcOpcode.Initial, (byte)DreamProcOpcode.AssignNoPush, 10
+        };
+        code.AddRange(BitConverter.GetBytes(index));
+        code.Add((byte)DreamProcOpcode.PushNull); code.Add((byte)DreamProcOpcode.Return);
+        var proc = json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "test_initial_wire")!;
+        proc["Bytecode"] = Convert.ToBase64String(code.ToArray()); proc["SourceInfo"] = new JsonArray();
+        return json;
+    }
+    tests.Add(($"initial preserves declared inheritance/null despite current instance mutation: {artifact}", () => {
+        var json = InitialJson();
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        runtime.InvokeGlobal("test_initial_allocate");
+        var instance = (DmObject)runtime.GetGlobal("initial_owner").Value!;
+        Check(instance.Variables["items"].Value is DmList, "Fixture must have executed a per-instance list initializer.");
+        instance.Variables["scalar"] = 99;
+        runtime.InvokeGlobal("test_initial", new DmValue(instance));
+        Check(runtime.GetGlobal("initial_result").Number == 7, "Initial read current instance state.");
+        instance.Variables.Clear();
+        instance.Variables["type"] = new DmValue(new DmTypeReference(0, "/"));
+        instance.Variables["never_declared"] = 22;
+        runtime.InvokeGlobal("test_initial", new DmValue(instance));
+        Check(runtime.GetGlobal("initial_result").Number == 7, "Host Clear/metadata spoof changed original declared value.");
+        var type = new DmValue(new DmTypeReference(instance.TypeId, instance.TypePath));
+        runtime.InvokeGlobal("test_initial", type);
+        Check(runtime.GetGlobal("initial_result").Number == 7, "Type owner did not use inherited declarations.");
+        foreach (var key in new[] { "nullable", "items", "never_declared" }) {
+            runtime.InvokeGlobal("test_initial_wire", new DmValue(instance), key);
+            Check(runtime.GetGlobal("initial_result").IsNull, "Null placeholder/child null/missing field used current state or ancestor fallback.");
+        }
+        runtime.InvokeGlobal("test_initial_wire", type, "type_value");
+        Check(runtime.GetGlobal("initial_result").Value is DmTypeReference value && value.Path == "/datum/initial_parent", "Inherited type default changed.");
+        runtime.InvokeGlobal("test_initial_wire", type, "resource_value");
+        Check(runtime.GetGlobal("initial_result").Value is DmResource, "Inherited immutable resource default changed.");
+        runtime.InvokeGlobal("test_initial_wire", DmValue.Null, "scalar");
+        Check(runtime.GetGlobal("initial_result").IsNull, "Null owner must return null for a string field.");
+    }));
+    tests.Add(($"initial never executes initializers or validates unrelated default values: {artifact}", () => {
+        var json = InitialJson();
+        var id = TypeId(json, "/datum/initial_effect");
+        var variables = json["Types"]![id]!["Variables"]!;
+        variables["unrelated"] = new JsonObject { ["type"] = 3, ["values"] = new JsonArray() };
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        var type = new DmValue(new DmTypeReference(id, "/datum/initial_effect"));
+        runtime.InvokeGlobal("test_initial", type);
+        Check(runtime.GetGlobal("initial_result").Number == 11, "Targeted query converted unrelated mutable defaults.");
+        runtime.InvokeGlobal("test_initial_wire", type, "effect");
+        Check(runtime.GetGlobal("initial_result").IsNull && runtime.Logs.Count == 0 && runtime.PendingThreads == 0,
+            "Initial executed an effectful initializer or fabricated its eventual value.");
+        Throws(() => runtime.InvokeGlobal("test_initial_wire", type, "unrelated"), "Compiler value kind 3");
+        Check(runtime.Logs.Count == 0, "Rejected mutable default produced effects.");
+    }));
+    tests.Add(($"initial static guards respect instance precedence and root-global noninheritance: {artifact}", () => {
+        var json = InitialJson();
+        var id = TypeId(json, "/datum/initial_parent/child");
+        var globals = json["Globals"]!["Names"]!.AsArray();
+        var index = Array.FindIndex(globals.Select(n => n!.GetValue<string>()).ToArray(), n => n == "initial_result");
+        json["Types"]![0]!["GlobalVariables"] ??= new JsonObject();
+        json["Types"]![0]!["GlobalVariables"]!["root_only"] = index;
+        json["Types"]![id]!["GlobalVariables"] ??= new JsonObject();
+        json["Types"]![id]!["GlobalVariables"]!["scalar"] = index;
+        json["Types"]![id]!["Variables"]!.AsObject().Remove("scalar");
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        var type = new DmValue(new DmTypeReference(id, "/datum/initial_parent/child"));
+        Throws(() => runtime.InvokeGlobal("test_initial_wire", type, "shared"), "static/global field");
+        runtime.InvokeGlobal("test_initial", type);
+        Check(runtime.GetGlobal("initial_result").Number == 4, "Derived static mapping incorrectly shadowed inherited instance Variables.");
+        runtime.InvokeGlobal("test_initial_wire", type, "root_only");
+        Check(runtime.GetGlobal("initial_result").IsNull, "Root global was incorrectly inherited.");
+        Throws(() => runtime.InvokeGlobal("test_initial_wire", new DmValue(new DmTypeReference(0, "/")), "root_only"), "static/global field");
+    }));
+    tests.Add(($"initial rejects native/meta/numeric-index and invalid owner/key forms: {artifact}", () => {
+        var json = InitialJson();
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        var type = new DmValue(new DmTypeReference(TypeId(json, "/datum/initial_parent"), "/datum/initial_parent"));
+        foreach (var name in new[] { "type", "parent_type", "vars", "tag" })
+            Throws(() => runtime.InvokeGlobal("test_initial_wire", type, name), "native/metadata");
+        foreach (var (path, field) in new[] { ("/atom", "name"), ("/atom", "text"), ("/atom", "density"), ("/world", "maxx"), ("/list", "len") })
+            Throws(() => runtime.InvokeGlobal("test_initial_wire", new DmValue(new DmTypeReference(TypeId(json, path), path)), field), "native/metadata");
+        Throws(() => runtime.InvokeGlobal("test_initial_wire", type, 1), "numeric indexing");
+        Throws(() => runtime.InvokeGlobal("test_initial_wire", DmValue.Null, DmValue.Null), "string field name");
+        foreach (var owner in new DmValue[] { 1, "text", new(new DmList()), new(new DmAssocList()) })
+            Throws(() => runtime.InvokeGlobal("test_initial_wire", owner, "scalar"), "type or object owner");
+        Throws(() => runtime.InvokeGlobal("test_initial_wire", new DmValue(new DmTypeReference(-1, "/bad")), "scalar"), "invalid type identity");
+        Throws(() => runtime.InvokeGlobal("test_initial_wire", new DmValue(new DmObject(int.MaxValue, "/bad")), "scalar"), "invalid type identity");
+    }));
+    foreach (var kind in new[] { 2, 3, 6 })
+        tests.Add(($"initial rejects requested unsupported encoded default {kind}: {artifact}", () => {
+            var json = InitialJson();
+            var id = TypeId(json, "/datum/initial_effect");
+            var raw = new JsonObject { ["type"] = kind };
+            if (kind == 2) raw["value"] = 0; else raw["values"] = new JsonArray();
+            json["Types"]![id]!["Variables"]!["unsupported"] = raw;
+            var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+            Throws(() => runtime.InvokeGlobal("test_initial_wire", new DmValue(new DmTypeReference(id, "/datum/initial_effect")), "unsupported"), $"Compiler value kind {kind}");
+        }));
+    tests.Add(($"initial ancestry work is bounded without partially publishing a result: {artifact}", () => {
+        var json = InitialJson();
+        var types = json["Types"]!.AsArray();
+        var parent = TypeId(json, "/datum");
+        for (var depth = 0; depth < 50; depth++) {
+            var id = types.Count;
+            types.Add(new JsonObject { ["Path"] = $"/datum/initial_deep_{depth}", ["Parent"] = parent, ["Variables"] = new JsonObject { ["scalar"] = 1 } });
+            parent = id;
+        }
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())) { InstructionBudget = 32 }; runtime.Boot();
+        Throws(() => runtime.InvokeGlobal("test_initial", new DmValue(new DmTypeReference(parent, "/datum/initial_deep_49"))),
+            "Instruction budget exhausted during initial ancestry lookup");
+        Check(runtime.GetGlobal("initial_result").IsNull, "Failed lookup published an incomplete value.");
+    }));
+    tests.Add(($"static metadata remains optional and invalid mappings fail during load: {artifact}", () => {
+        var json = InitialJson();
+        foreach (var type in json["Types"]!.AsArray()) type!.AsObject().Remove("GlobalVariables");
+        _ = CompiledProject.Parse(json.ToJsonString());
+        var id = TypeId(json, "/datum/initial_parent");
+        foreach (var (name, index) in new[] { ("bad", -1), ("bad", json["Globals"]!["GlobalCount"]!.GetValue<int>()), ("", 0) }) {
+            json["Types"]![id]!["GlobalVariables"] = new JsonObject { [name] = index };
+            Throws(() => CompiledProject.Parse(json.ToJsonString()), "invalid static/global variable mapping");
+        }
+    }));
+}
+
 var movableInitPath = args.Length > 7 ? args[7] : "build/movable-init.json";
 var movableInitOptimizedPath = args.Length > 8 ? args[8] : "build/movable-init-optimized.json";
 foreach (var artifact in new[] { movableInitPath, movableInitOptimizedPath }) {
@@ -1541,6 +1670,19 @@ foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath
         Throws(() => CompiledProject.Parse(json.ToJsonString()), "const variable name");
     }));
 }
+
+
+foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath })
+    tests.Add(($"initial ignores mapped prototype overrides and current dictionary mutation: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        var first = runtime.MapCells[0].Entities[0];
+        Check(first.Variables["scalar"].Number == 11, "Fixture lost its raw map override.");
+        runtime.InvokeGlobal("test_entity_initial", new DmValue(first));
+        Check(runtime.GetGlobal("entity_initial_result").Number == 1, "Initial read cloned map definition instead of original type.");
+        first.Variables.Clear();
+        runtime.InvokeGlobal("test_entity_initial", new DmValue(first));
+        Check(runtime.GetGlobal("entity_initial_result").Number == 1, "Initial consulted the current public dictionary.");
+    }));
 
 var failed = 0;
 foreach (var (name, run) in tests) {

@@ -480,3 +480,36 @@ var/enum_last
 /proc/test_enum_filtered(values)
     for(var/datum/type_family/value in values)
         enum_count += 1
+
+
+/datum/initial_parent
+    var/scalar = 4
+    var/nullable = 5
+    var/list/items = list(1)
+    var/static/shared = 9
+    var/type_value = /datum/initial_parent
+    var/resource_value = 'semantics.dm'
+
+/datum/initial_parent/child
+    scalar = 7
+    nullable = null
+
+/datum/initial_effect
+    var/scalar = 11
+    var/effect = initial_effect_helper()
+
+/proc/initial_effect_helper()
+    world << "initial-side-effect"
+    return 12
+
+var/initial_result
+var/datum/initial_parent/initial_owner
+
+/proc/test_initial_allocate()
+    initial_owner = new /datum/initial_parent/child
+
+/proc/test_initial(owner)
+    initial_result = initial(owner:scalar)
+
+/proc/test_initial_wire(owner, key)
+    return

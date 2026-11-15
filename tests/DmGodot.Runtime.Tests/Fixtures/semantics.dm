@@ -393,3 +393,14 @@ var/list/types_result
 
 /proc/test_typesof_subtract(value)
     types_result = typesof(value) - value
+
+
+/proc/test_list_subtract(first, second)
+    types_result = first - second
+
+/proc/test_list_remove(first, second)
+    first -= second
+
+/proc/test_list_subtract_twice(first)
+    types_result = first - null
+    types_result = first - null

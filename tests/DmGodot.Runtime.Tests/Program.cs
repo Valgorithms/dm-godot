@@ -859,10 +859,148 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
         runtime.InvokeGlobal("test_typesof", type);
         Check(((DmList)runtime.GetGlobal("types_result").Value!).Values.Count == 5, "New public boundary failed to reset allocation budget.");
     }));
-    tests.Add(($"typesof does not silently add list subtraction: {artifact}", () => {
+    tests.Add(($"typesof subtraction excludes the root without changing descendant order: {artifact}", () => {
         var json = JsonNode.Parse(File.ReadAllText(artifact))!;
         var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
-        Throws(() => runtime.InvokeGlobal("test_typesof_subtract", new DmValue(new DmTypeReference(TypeId(json, "/datum/type_family"), "/datum/type_family"))), "Expected a DM number");
+        var type = new DmValue(new DmTypeReference(TypeId(json, "/datum/type_family"), "/datum/type_family"));
+        runtime.InvokeGlobal("test_typesof", type);
+        var expected = ((DmList)runtime.GetGlobal("types_result").Value!).Values.Skip(1).ToArray();
+        runtime.InvokeGlobal("test_typesof_subtract", type);
+        Check(((DmList)runtime.GetGlobal("types_result").Value!).Values.SequenceEqual(expected), "subtypesof root removal/order changed.");
+    }));
+}
+
+
+foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
+    DmList Positional(params DmValue[] values) { var list = new DmList(); list.Values.AddRange(values); return list; }
+    tests.Add(($"ordinary subtraction removes the last occurrence once per RHS entry: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        DmList Subtract(DmList a, DmValue b) {
+            runtime.InvokeGlobal("test_list_subtract", new DmValue(a), b);
+            return (DmList)runtime.GetGlobal("types_result").Value!;
+        }
+        var source = Positional(1, 2, 1, 3, 1);
+        var result = Subtract(source, 1);
+        Check(result.Values.SequenceEqual(new DmValue[] { 1, 2, 1, 3 }) && source.Values.Count == 5,
+            "Scalar subtraction removed all/first occurrences or mutated source.");
+        var rhs = Positional(1, 1, 99);
+        rhs.Associations[1] = 3; // RHS associated values are never removals.
+        result = Subtract(source, new DmValue(rhs));
+        Check(result.Values.SequenceEqual(new DmValue[] { 1, 2, 3 }) && rhs.Values.Count == 3 && rhs.Associations[1].Number == 3,
+            "RHS duplicates/order/association values were interpreted incorrectly.");
+        var missing = Subtract(source, 99);
+        Check(!ReferenceEquals(missing, source) && missing.Values.SequenceEqual(source.Values), "Absent subtraction must still copy.");
+        var empty = Subtract(source, new DmValue(source));
+        Check(empty.Values.Count == 0 && source.Values.Count == 5, "Self subtraction must empty the copy, not source.");
+        var nulls = Positional(DmValue.Null, 0, DmValue.Null);
+        result = Subtract(nulls, DmValue.Null);
+        Check(result.Values.SequenceEqual(new DmValue[] { DmValue.Null, 0 }), "Null must not compare equal to numeric zero.");
+        var numbers = Positional(new DmValue(float.NaN), 0, new DmValue(-0f), new DmValue(float.NaN));
+        result = Subtract(numbers, new DmValue(float.NaN));
+        Check(result.Values.Count == 3 && float.IsNaN(result.Values[0].Number), "NaN equality/last occurrence changed.");
+        result = Subtract(numbers, 0);
+        Check(result.Values.Count == 3 && result.Values[1].Number == 0 && float.IsNaN(result.Values[2].Number),
+            "Signed zero must compare equal and remove only the last zero.");
+    }));
+    tests.Add(($"subtraction shallow-copies live associations and removes association with duplicate key: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        var nested = Positional(4);
+        var obj = new DmObject(0, "/");
+        var source = Positional("a", "b", "a", new DmValue(nested));
+        source.Associations["a"] = new DmValue(nested);
+        source.Associations["b"] = new DmValue(obj);
+        source.Associations["orphan"] = 99;
+        runtime.InvokeGlobal("test_list_subtract", new DmValue(source), "a");
+        var result = (DmList)runtime.GetGlobal("types_result").Value!;
+        Check(result.Values.SequenceEqual(new DmValue[] { "a", "b", new(nested) }) && !result.Associations.ContainsKey("a"),
+            "Removing duplicate associated key must delete association even when one key remains.");
+        Check(!result.Associations.ContainsKey("orphan") && ReferenceEquals(result.Associations["b"].Value, obj),
+            "Copy retained an orphan association or cloned an object.");
+        Check(source.Associations.Count == 3 && source.Values.Count == 4, "Result removal changed source associations.");
+        runtime.InvokeGlobal("test_list_subtract", new DmValue(source), new DmValue(new DmList()));
+        var copy = (DmList)runtime.GetGlobal("types_result").Value!;
+        Check(copy.Associations.Count == 2 && ReferenceEquals(copy.Associations["a"].Value, nested) &&
+            ReferenceEquals(copy.Values[^1].Value, nested), "Nested values must remain shared in a shallow copy.");
+        copy.Associations["b"] = 5;
+        nested.Values[0] = 6;
+        Check(ReferenceEquals(source.Associations["b"].Value, obj) &&
+            ((DmList)source.Associations["a"].Value!).Values[0].Number == 6, "Dictionary isolation or shallow value alias changed.");
+    }));
+    tests.Add(($"subtraction uses nested list/object/alist identity and expands only ordinary RHS lists: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        var nested = Positional(1); var equalNested = Positional(1);
+        var first = new DmAssocList(); var second = new DmAssocList();
+        first.Set("key", 1); second.Set("key", 1);
+        var obj = new DmObject(0, "/"); var other = new DmObject(0, "/");
+        var source = Positional(new(nested), new(equalNested), 1, new(first), new(second), new(first), new(obj), new(other));
+        runtime.InvokeGlobal("test_list_subtract", new DmValue(source), new DmValue(nested));
+        var result = (DmList)runtime.GetGlobal("types_result").Value!;
+        Check(result.Values.Count == 7 && ReferenceEquals(result.Values[0].Value, nested),
+            "Ordinary RHS list must expand its positional contents, not remove its own identity.");
+        runtime.InvokeGlobal("test_list_subtract", new DmValue(source), new DmValue(Positional(new(nested), new(obj))));
+        result = (DmList)runtime.GetGlobal("types_result").Value!;
+        Check(!result.Values.Contains(new(nested)) && result.Values.Contains(new(equalNested)) &&
+            !result.Values.Contains(new(obj)) && result.Values.Contains(new(other)), "Reference identity was replaced by structural equality.");
+        runtime.InvokeGlobal("test_list_subtract", new DmValue(source), new DmValue(first));
+        result = (DmList)runtime.GetGlobal("types_result").Value!;
+        Check(result.Values.Count == 7 && result.Values.Count(v => ReferenceEquals(v.Value, first)) == 1 &&
+            result.Values.Contains(new(second)), "Strict RHS list must be one scalar identity, not enumerate keys.");
+    }));
+    tests.Add(($"subtraction preserves numeric behavior and rejects unsupported operators: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        runtime.InvokeGlobal("test_list_subtract", 7, 2);
+        Check(runtime.GetGlobal("types_result").Number == 5, "Numeric subtraction changed.");
+        runtime.InvokeGlobal("test_list_subtract", DmValue.Null, 2);
+        Check(runtime.GetGlobal("types_result").Number == -2, "Null numeric subtraction changed.");
+        Throws(() => runtime.InvokeGlobal("test_list_subtract", new DmValue(new DmAssocList()), 1), "Strict associative list subtraction");
+        Throws(() => runtime.InvokeGlobal("test_list_subtract", 1, new DmValue(Positional(1))), "Expected a DM number");
+        Throws(() => runtime.InvokeGlobal("test_list_subtract", new DmValue(new DmObject(0, "/")), 1), "Expected a DM number");
+        Throws(() => runtime.InvokeGlobal("test_list_subtract", new DmValue(Positional(1)), new DmValue(new object())), "operand representation");
+        var original = Positional(1, 2);
+        Throws(() => runtime.InvokeGlobal("test_list_remove", new DmValue(original), 1), "not implemented");
+        Check(original.Values.SequenceEqual(new DmValue[] { 1, 2 }), "Unsupported -= changed source.");
+    }));
+    tests.Add(($"subtraction charges search and shifting work before modifying copied results: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)) { InstructionBudget = 250 }; runtime.Boot();
+        var source = Positional(Enumerable.Range(0, 100).Select(i => new DmValue((float)i)).ToArray());
+        Throws(() => runtime.InvokeGlobal("test_list_subtract", new DmValue(source), 0), "Instruction budget exhausted during list subtraction");
+        Check(runtime.GetGlobal("types_result").IsNull && source.Values.Count == 100, "Failed shift work published/mutated input.");
+        runtime.InvokeGlobal("test_list_subtract", new DmValue(source), 99);
+        Check(((DmList)runtime.GetGlobal("types_result").Value!).Values.Count == 99 && source.Values.Count == 100,
+            "Cheap last removal failed or altered source.");
+        var misses = Positional(Enumerable.Repeat(new DmValue(-1f), 100).ToArray());
+        Throws(() => runtime.InvokeGlobal("test_list_subtract", new DmValue(source), new DmValue(misses)), "Instruction budget exhausted during list subtraction");
+        Check(source.Values.Count == 100 && misses.Values.Count == 100, "Budget failure changed operands.");
+    }));
+    tests.Add(($"subtraction copies charge positional and unique live association slots: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)) { InstructionBudget = 1_000_000 }; runtime.Boot();
+        var empty = new DmValue(new DmList());
+        var source = Positional(Enumerable.Repeat(new DmValue(1f), 99_999).ToArray());
+        source.Associations["orphan"] = 2; // Must not consume copied association slots.
+        runtime.InvokeGlobal("test_list_subtract", new DmValue(source), empty);
+        var success = (DmList)runtime.GetGlobal("types_result").Value!;
+        Check(success.Values.Count == 99_999 && success.Associations.Count == 0, "Exact positional budget/orphan pruning failed.");
+        source.Values.Add(1);
+        Throws(() => runtime.InvokeGlobal("test_list_subtract", new DmValue(source), empty), "List allocation budget");
+        Check(ReferenceEquals(success, runtime.GetGlobal("types_result").Value), "Failed copy replaced published result.");
+        var keyed = Positional(Enumerable.Repeat(new DmValue("key"), 99_997).ToArray());
+        keyed.Associations["key"] = 4;
+        runtime.InvokeGlobal("test_list_subtract", new DmValue(keyed), empty);
+        success = (DmList)runtime.GetGlobal("types_result").Value!;
+        Check(success.Values.Count == 99_997 && success.Associations.Count == 1, "Duplicate keys charged association more than once.");
+        keyed.Values.Add("key");
+        Throws(() => runtime.InvokeGlobal("test_list_subtract", new DmValue(keyed), empty), "List allocation budget");
+        Check(ReferenceEquals(success, runtime.GetGlobal("types_result").Value) && keyed.Associations["key"].Number == 4,
+            "Association budget failure published partial output or mutated source.");
+    }));
+    tests.Add(($"subtraction copy budgets aggregate within one public boundary: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)) { InstructionBudget = 1_000_000 }; runtime.Boot();
+        var source = Positional(Enumerable.Repeat(new DmValue(1f), 60_000).ToArray());
+        Throws(() => runtime.InvokeGlobal("test_list_subtract_twice", new DmValue(source)), "List allocation budget");
+        Check(((DmList)runtime.GetGlobal("types_result").Value!).Values.Count == 60_000 && source.Values.Count == 60_000,
+            "Second failed copy must preserve first result and input.");
+        runtime.InvokeGlobal("test_list_subtract", new DmValue(source), DmValue.Null);
+        Check(((DmList)runtime.GetGlobal("types_result").Value!).Values.Count == 60_000, "Public boundary failed to reset copy budget.");
     }));
 }
 

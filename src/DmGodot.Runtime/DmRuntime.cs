@@ -616,7 +616,7 @@ public sealed class DmRuntime {
                     case DreamProcOpcode.BooleanNot: frame.Push(frame.Pop().IsTruthy ? 0 : 1); break;
                     case DreamProcOpcode.Negate: frame.Push(-frame.Pop().Number); break;
                     case DreamProcOpcode.Add: { var right = frame.Pop(); var left = frame.Pop(); frame.Push(Add(left, right)); break; }
-                    case DreamProcOpcode.Subtract: Binary(frame, (a, b) => a - b); break;
+                    case DreamProcOpcode.Subtract: { var right = frame.Pop(); var left = frame.Pop(); frame.Push(Subtract(left, right)); break; }
                     case DreamProcOpcode.Multiply: Binary(frame, (a, b) => a * b); break;
                     case DreamProcOpcode.Divide: Binary(frame, (a, b) => b == 0 ? throw new CompatibilityException("Division by zero.") : a / b); break;
                     case DreamProcOpcode.Modulus: Binary(frame, IntegerModulus); break;
@@ -727,6 +727,50 @@ public sealed class DmRuntime {
         }
     }
 
+
+
+    private DmValue Subtract(DmValue left, DmValue right) {
+        if (left.Value is DmAssocList)
+            throw new CompatibilityException("Strict associative list subtraction is not implemented.");
+        if (left.Value is not DmList source) return left.Number - right.Number;
+        if (right.Value is not (null or float or string or DmTypeReference or DmResource or DmObject or DmList or DmAssocList))
+            throw new CompatibilityException("List subtraction operand representation is not implemented.");
+        void Work(int count) {
+            if (count < 0 || count > _budget)
+                throw new CompatibilityException("Instruction budget exhausted during list subtraction.");
+            _budget -= count;
+        }
+        // Copy before removing. Only live positional keys retain associations;
+        // stale associations absent from Values do not survive upstream CreateCopy.
+        Work(source.Values.Count);
+        ChargeListAllocation(1L + source.Values.Count);
+        var result = new DmList();
+        result.Values.AddRange(source.Values);
+        foreach (var key in source.Values) {
+            if (source.Associations.TryGetValue(key, out var value) && !result.Associations.ContainsKey(key)) {
+                ChargeListAllocation(2);
+                result.Associations.Add(key, value);
+            }
+        }
+        void RemoveOne(DmValue value) {
+            Work(1);
+            for (var index = result.Values.Count - 1; index >= 0; index--) {
+                Work(1);
+                if (!result.Values[index].Equals(value)) continue;
+                // List.RemoveAt shifts the suffix; bound that native work too.
+                Work(result.Values.Count - index - 1);
+                result.Associations.Remove(value);
+                result.Values.RemoveAt(index);
+                return;
+            }
+        }
+        if (right.Value is DmList removals) {
+            foreach (var value in removals.Values) RemoveOne(value);
+        } else {
+            RemoveOne(right);
+        }
+        return new(result);
+    }
 
     private DmList TypesOf(DmValue[] arguments) {
         void Work(int count = 1) {

@@ -250,6 +250,20 @@ explicit capability errors. User-defined procedure bodies are not intercepted.
 Type-index construction, string searches, arguments and traversal charge the
 instruction budget; result objects/slots charge the existing aggregate list budget
 before allocation/growth. No type defaults, constructors or callbacks execute.
-List subtraction remains unsupported. Semantics follow pinned
+Compound list removal (-=) remains unsupported. Semantics follow pinned
 [NativeRoot.typesof](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/Native/DreamProcNativeRoot.cs)
 and ObjectTree descendant traversal; this is not complete reflection support.
+
+Ordinary list subtraction now follows pinned
+[DreamList.CreateCopy/OperatorSubtract/Remove](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Objects/Types/DreamList.cs).
+It returns a fresh shallow copy, retains only associations whose keys occur in
+the positional sequence, and removes the last matching occurrence once per ordinary
+RHS list entry (or once for a scalar RHS). Removing a key drops its association even
+if duplicate positional keys remain. RHS associations are not removal values.
+Inputs remain untouched; nested values preserve reference identity. A strict list
+on the RHS is one scalar identity, while strict-list subtraction on the LHS and
+custom object subtraction remain unsupported. Numeric/null arithmetic is unchanged.
+Copies charge one list plus positional slots and each unique live association pair
+before growth. Copy work, comparisons and RemoveAt suffix shifts consume the
+instruction budget. Failure does not publish a partial result, and both budgets
+retain their existing public execution boundaries. This does not implement -=.

@@ -303,7 +303,7 @@ public sealed class DmRuntime {
                     foreach (var entity in cell.Objects) {
                         RequireMapType(entity.Type, "/atom/movable", "entity");
                         if (entity.VarOverrides is { Count: > 0 })
-                            throw new CompatibilityException("Map entity variable overrides are not implemented.");
+                            throw new CompatibilityException($"Map entity variable overrides are not implemented: {Data.Types[entity.Type].Path} [{string.Join(", ", entity.VarOverrides.Keys.Order(StringComparer.Ordinal))}].");
                         var instance = CreateInstance(entity.Type, initializeLater: true);
                         if (ResolveInitializer(entity.Type) is { } initializer)
                             ValidateMapInitializer(instance, initializer, new HashSet<Procedure>(), "Movable");

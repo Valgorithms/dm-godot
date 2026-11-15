@@ -55,14 +55,14 @@ world
 /proc/value_properties()
     var/a = alist()
     var/b = alist()
-    result = list(a == a, a == b, !!a, length(a), a.len)
+    result = list(a == a, a == b, !!a, length(a), a:len)
 
 /proc/lengths(values)
-    result = list(length(values), values.len)
+    result = list(length(values), values:len)
 
 /proc/type_guard()
     var/a = alist()
-    result = a.type
+    result = a:type
 /proc/islist_guard()
     result = islist(alist())
 /proc/istype_guard()
@@ -78,15 +78,15 @@ world
         result = key
 /proc/native_guard()
     var/a = alist()
-    result = a.Copy()
+    result = a:Copy()
 /proc/new_guard()
     result = new /alist
 /proc/len_write_guard()
     var/a = alist(0 = 1)
-    a.len = 0
+    a:len = 0
 /proc/type_write_guard()
     var/a = alist()
-    a.type = /list
+    a:type = /list
 
 /proc/growth_budget()
     result = alist()

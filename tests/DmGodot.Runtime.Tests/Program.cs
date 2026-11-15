@@ -809,13 +809,14 @@ foreach (var artifact in new[] { alistPath, alistOptimizedPath }) {
         Check(list.Count == 6 && list.Get(0).ToString() == "updated" && list.Get(-1).ToString() == "negative", "Numeric keys were positional or duplicates changed length.");
         Check(list.Get(2.9f).ToString() == "fraction" && list.Get(2).IsNull, "Fractional key was truncated.");
         Check(list.Get(DmValue.Null).ToString() == "true-null" && list.Get("null").ToString() == "named-null", "True null and parser string-null keys collided.");
-        Check(list.ContainsKey("empty") && list.Get("empty").IsNull && !list.ContainsKey("absent"), "Unkeyed entry or absent key changed.");
+        Check(list.ContainsKey("empty") && list.Get("empty").IsNull && !list.ContainsKey("absent"), "Null-valued entry or absent key changed.");
         runtime.InvokeGlobal("lengths", new DmValue(list));
         Check(((DmList)runtime.GetGlobal("result").Value!).Values.All(v => v.Number == 6), "length/len dispatch lost strict list entries.");
         runtime.InvokeGlobal("exact_index", new DmValue(list), 2.9f);
         Check(runtime.GetGlobal("result").ToString() == "fraction", "Strict index read used ordinary positional coercion.");
         runtime.InvokeGlobal("index_update", new DmValue(list), 0, 7);
-        runtime.InvokeGlobal("compound_index", new DmValue(list), 0);
+        runtime.InvokeGlobal("separate_index_update", new DmValue(list), 0);
+        Throws(() => runtime.InvokeGlobal("compound_index", new DmValue(list), 0), "Compound indexed/field assignment");
         Check(runtime.GetGlobal("result").Number == 8 && list.Count == 6, "Reference-index update/read or duplicate assignment changed.");
     }));
     tests.Add(($"strict numeric keys preserve infinities NaN and signed zero: {artifact}", () => {
@@ -894,6 +895,23 @@ foreach (var artifact in new[] { alistPath, alistOptimizedPath }) {
         json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "probe")!["Bytecode"] = Convert.ToBase64String(bytes.ToArray());
         var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
         Throws(() => runtime.InvokeGlobal("probe"), "allocation budget");
+    }));
+    tests.Add(($"strict reference-index read dispatch stays distinct: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var globalIndex = json["Globals"]!["Names"]!.AsArray().Select((name, index) => (name, index)).Single(p => p.name!.GetValue<string>() == "result").index;
+        var code = new List<byte> {
+            (byte)DreamProcOpcode.PushReferenceValue, 8, 0,
+            (byte)DreamProcOpcode.PushReferenceValue, 8, 1,
+            (byte)DreamProcOpcode.PushReferenceValue, 7,
+            (byte)DreamProcOpcode.AssignNoPush, 10
+        };
+        code.AddRange(BitConverter.GetBytes(globalIndex));
+        code.Add((byte)DreamProcOpcode.PushNull); code.Add((byte)DreamProcOpcode.Return);
+        json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "probe")!["Bytecode"] = Convert.ToBase64String(code.ToArray());
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        var list = new DmAssocList(); list.Set(2.9f, 91);
+        runtime.InvokeGlobal("probe", new DmValue(list), 2.9f);
+        Check(runtime.GetGlobal("result").Number == 91, "Reference kind7 used ordinary list indexing.");
     }));
     tests.Add(($"strict truncated pair operand stays rejected by loader: {artifact}", () => {
         var json = JsonNode.Parse(File.ReadAllText(artifact))!;

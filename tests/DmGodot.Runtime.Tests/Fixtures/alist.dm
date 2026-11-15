@@ -24,7 +24,7 @@ world
     items = null
 
 /proc/key_literals()
-    result = alist(0 = "zero", -1 = "negative", 2.9 = "fraction", (null) = "true-null", null = "named-null", "empty", 0 = "updated")
+    result = alist(0 = "zero", -1 = "negative", 2.9 = "fraction", (null) = "true-null", null = "named-null", "empty" = null, 0 = "updated")
 
 /proc/numeric_keys(a, b, c)
     result = alist((a) = 1, (b) = 2, (c) = 3)
@@ -53,15 +53,15 @@ world
     result = alist((key_one) = 1, (key_two) = 2)
 
 /proc/value_properties()
-    var/alist/a = alist()
-    var/alist/b = alist()
+    var/a = alist()
+    var/b = alist()
     result = list(a == a, a == b, !!a, length(a), a.len)
 
 /proc/lengths(values)
     result = list(length(values), values.len)
 
 /proc/type_guard()
-    var/alist/a = alist()
+    var/a = alist()
     result = a.type
 /proc/islist_guard()
     result = islist(alist())
@@ -77,25 +77,25 @@ world
     for (var/key in alist(0 = 1))
         result = key
 /proc/native_guard()
-    var/alist/a = alist()
+    var/a = alist()
     result = a.Copy()
 /proc/new_guard()
     result = new /alist
 /proc/len_write_guard()
-    var/alist/a = alist(0 = 1)
+    var/a = alist(0 = 1)
     a.len = 0
 /proc/type_write_guard()
-    var/alist/a = alist()
+    var/a = alist()
     a.type = /list
 
 /proc/growth_budget()
     result = alist()
-    for (var/i = 1; i <= 50001; i++)
+    for (var/i = 1; i <= 50001; i += 1)
         result[i] = i
 
 /proc/overwrite_budget()
     result = alist(0 = 1)
-    for (var/i = 1; i <= 60000; i++)
+    for (var/i = 1; i <= 60000; i += 1)
         result[0] = i
 
 /proc/probe()
@@ -107,3 +107,7 @@ world
     var/alist/items = alist("key" = world.time)
 /obj/unsafe_alist_native
     contents = alist()
+
+/proc/separate_index_update(values, key)
+    values[key] = values[key] + 1
+    result = values[key]

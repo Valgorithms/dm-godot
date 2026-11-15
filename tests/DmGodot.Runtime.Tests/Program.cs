@@ -925,6 +925,19 @@ foreach (var artifact in new[] { alistPath, alistOptimizedPath }) {
             json["Maps"]![0]!["CellDefinitions"]!["b"]!["Objects"]![1]!["Type"] = TypeId(json, type);
             Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Movable initializer");
         }));
+    foreach (var referenceKind in new byte[] { 10, 13 })
+        tests.Add(($"optimized null assignment cannot widen initializer writes {referenceKind}: {artifact}", () => {
+            var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+            var id = referenceKind == 10
+                ? json["Globals"]!["Names"]!.AsArray().Select((name, index) => (name, index)).Single(p => p.name!.GetValue<string>() == "result").index
+                : json["Strings"]!.AsArray().Select((name, index) => (name, index)).Single(p => p.name!.GetValue<string>() == "type").index;
+            var init = json["Types"]![TypeId(json, "/obj/holder")]!["InitProc"]!.GetValue<int>();
+            var code = new List<byte> { (byte)DreamProcOpcode.NullRef, referenceKind };
+            code.AddRange(BitConverter.GetBytes(id)); code.Add((byte)DreamProcOpcode.PushNull); code.Add((byte)DreamProcOpcode.Return);
+            json["Procs"]![init]!["Bytecode"] = Convert.ToBase64String(code.ToArray());
+            Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())),
+                referenceKind == 10 ? "own user variables" : "native/metadata assignment");
+        }));
     tests.Add(($"strict tagged compiler constant stays out of shared defaults: {artifact}", () => {
         var json = JsonNode.Parse(File.ReadAllText(artifact))!;
         json["Types"]![TypeId(json, "/obj/holder")]!["Variables"]!["items"] = new JsonObject { ["type"] = 6, ["values"] = new JsonArray() };

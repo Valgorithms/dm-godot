@@ -400,7 +400,7 @@ public sealed class DmRuntime {
                     var id = reader.Int();
                     if (id < 0 || id >= Data.Types.Length) throw Fault(frame, offset, $"{role} initializer has an invalid type literal.");
                     break;
-                case DreamProcOpcode.Assign: case DreamProcOpcode.AssignNoPush: Assignment(reader.Reference(), offset); break;
+                case DreamProcOpcode.Assign: case DreamProcOpcode.AssignNoPush: case DreamProcOpcode.NullRef: Assignment(reader.Reference(), offset); break;
                 case DreamProcOpcode.ReturnReferenceValue:
                     if (reader.Reference().Kind != 2) throw Fault(frame, offset, $"{role} initializer reference reads are not implemented.");
                     break;
@@ -503,6 +503,7 @@ public sealed class DmRuntime {
                     case DreamProcOpcode.PushResource: frame.Push(new(new DmResource(Project.String(frame.Reader.Int())))); break;
                     case DreamProcOpcode.PushReferenceValue: frame.Push(Get(frame, frame.Reader.Reference())); break;
                     case DreamProcOpcode.Pop: frame.Pop(); break;
+                    case DreamProcOpcode.NullRef: Set(frame, frame.Reader.Reference(), DmValue.Null); break;
                     case DreamProcOpcode.Assign: case DreamProcOpcode.AssignNoPush: {
                         var reference = frame.Reader.Reference(); var value = frame.Pop(); Set(frame, reference, value);
                         if (opcode == DreamProcOpcode.Assign) frame.Push(value); break;

@@ -60,6 +60,10 @@ public sealed class DmRuntime {
     private long _sequence;
     private bool _booted;
     private int _budget;
+    // Bound constructor work as well as bytecode dispatch: one dimension opcode can
+    // otherwise allocate an unbounded graph. Reset only at public execution boundaries.
+    private const int ListAllocationLimit = 100_000;
+    private int _listAllocationRemaining = ListAllocationLimit;
     private int _immediateSpawnDepth;
     // Built-ins from the pinned OpenDream World.dm. User-defined vars remain ordinary fields.
     private static readonly HashSet<string> BuiltinWorldFields = new(StringComparer.Ordinal) {
@@ -97,6 +101,7 @@ public sealed class DmRuntime {
         if (_booted) throw new InvalidOperationException("The world has already booted.");
         _booted = true;
         _budget = InstructionBudget;
+        _listAllocationRemaining = ListAllocationLimit;
         if (Data.GlobalInitProc is { } init) {
             var fiber = new Fiber(new Frame(init, null, []));
             Execute(fiber);
@@ -110,10 +115,19 @@ public sealed class DmRuntime {
         if (_defaultArea is not null && visitedAreas.Add(_defaultArea)) StartNew(_defaultArea, []);
         foreach (var cell in _mapCells.OrderBy(c => c.Z).ThenByDescending(c => c.Y).ThenByDescending(c => c.X))
             StartNew(cell.Turf, []);
-        foreach (var movable in _mapMovableNewOrder)
+        foreach (var movable in _mapMovableNewOrder) {
+            // Upstream creates each movable here, after turf New prefixes. Its <init>
+            // precedes native loc assignment and New. Our retained loc is already set,
+            // but the validated initializer cannot observe it (or any other field).
+            if (ResolveInitializer(movable.TypeId) is { } initializer)
+                Execute(new Fiber(new Frame(initializer, movable, [])));
             StartNew(movable, [new DmValue(_mapLocations[movable].Loc)]);
+        }
         StartNew(World, []);
-        AdvanceBy(0);
+        // Preserve the existing deferred-work instruction slice, but keep list
+        // allocation charged to the same public Boot boundary.
+        _budget = InstructionBudget;
+        DrainUntil(Time);
     }
 
     private void StartNew(DmObject instance, DmValue[] arguments) {
@@ -127,6 +141,11 @@ public sealed class DmRuntime {
         var target = Time + deciseconds;
         if (!double.IsFinite(target)) throw new ArgumentOutOfRangeException(nameof(deciseconds));
         _budget = InstructionBudget;
+        _listAllocationRemaining = ListAllocationLimit;
+        DrainUntil(target);
+    }
+
+    private void DrainUntil(double target) {
         while (_queue.TryPeek(out _, out var priority) && priority.Time <= target) {
             Time = priority.Time;
             Execute(_queue.Dequeue());
@@ -285,7 +304,11 @@ public sealed class DmRuntime {
                         RequireMapType(entity.Type, "/atom/movable", "entity");
                         if (entity.VarOverrides is { Count: > 0 })
                             throw new CompatibilityException("Map entity variable overrides are not implemented.");
-                        var instance = CreateInstance(entity.Type);
+                        var instance = CreateInstance(entity.Type, initializeLater: true);
+                        if (ResolveInitializer(entity.Type) is { } initializer)
+                            ValidateMapInitializer(instance, initializer, new HashSet<Procedure>(), "Movable");
+                        // Validate every mapped initializer before Boot can produce effects.
+                        // Execution is deferred to this instance's position in New order.
                         _mapLocations.Add(instance, new(x, y, block.Z, turf));
                         entities.Add(instance);
                         blockMovables.Add((x, y, instance));
@@ -348,23 +371,23 @@ public sealed class DmRuntime {
         var area = CreateInstance(typeId, initializeLater: true);
         var initializer = ResolveInitializer(typeId);
         if (initializer is null) return area;
-        ValidateAreaInitializer(area, initializer, new HashSet<Procedure>());
+        ValidateMapInitializer(area, initializer, new HashSet<Procedure>(), "Area");
         Execute(new Fiber(new Frame(initializer, area, [])));
         return area;
     }
 
-    private void ValidateAreaInitializer(DmObject area, Procedure proc, HashSet<Procedure> visited) {
-        if (!visited.Add(proc)) throw new CompatibilityException($"Area initializer repeats a super initializer at {Project.Location(proc, 0)}.");
+    private void ValidateMapInitializer(DmObject area, Procedure proc, HashSet<Procedure> visited, string role) {
+        if (!visited.Add(proc)) throw new CompatibilityException($"{role} initializer repeats a super initializer at {Project.Location(proc, 0)}.");
         var frame = new Frame(proc, area, []);
         var reader = frame.Reader;
-        if (visited.Count > 256) throw Fault(frame, 0, "Area initializer inheritance limit exceeded.");
+        if (visited.Count > 256) throw Fault(frame, 0, $"{role} initializer inheritance limit exceeded.");
         if (Data.Types[proc.OwningTypeId].InitProc is not int ownInit || !ReferenceEquals(Data.Procs[ownInit], proc))
-            throw Fault(frame, 0, "Area initializer must be a compiler type initializer.");
+            throw Fault(frame, 0, $"{role} initializer must be a compiler type initializer.");
         void Assignment(Reference reference, int offset) {
-            if (reference.Kind != 13) throw Fault(frame, offset, "Area initializer may assign only its own user variables.");
+            if (reference.Kind != 13) throw Fault(frame, offset, $"{role} initializer may assign only its own user variables.");
             var name = Project.String(reference.Value);
             if (!area.Variables.ContainsKey(name) || ProtectedMapField(area, name) || name is "type" or "parent_type" or "vars" or "tag")
-                throw Fault(frame, offset, $"Area initializer native/metadata assignment '{name}' is not implemented.");
+                throw Fault(frame, offset, $"{role} initializer native/metadata assignment '{name}' is not implemented.");
         }
         while (reader.Position < reader.Length) {
             var offset = reader.Position;
@@ -375,24 +398,35 @@ public sealed class DmRuntime {
                 case DreamProcOpcode.PushString: case DreamProcOpcode.PushResource: Project.String(reader.Int()); break;
                 case DreamProcOpcode.PushType:
                     var id = reader.Int();
-                    if (id < 0 || id >= Data.Types.Length) throw Fault(frame, offset, "Area initializer has an invalid type literal.");
+                    if (id < 0 || id >= Data.Types.Length) throw Fault(frame, offset, $"{role} initializer has an invalid type literal.");
                     break;
                 case DreamProcOpcode.Assign: case DreamProcOpcode.AssignNoPush: Assignment(reader.Reference(), offset); break;
                 case DreamProcOpcode.ReturnReferenceValue:
-                    if (reader.Reference().Kind != 2) throw Fault(frame, offset, "Area initializer reference reads are not implemented.");
+                    if (reader.Reference().Kind != 2) throw Fault(frame, offset, $"{role} initializer reference reads are not implemented.");
                     break;
-                case DreamProcOpcode.CreateList:
-                    if (reader.Int() < 0) throw Fault(frame, offset, "Area initializer has an invalid list length.");
+                case DreamProcOpcode.CreateList: case DreamProcOpcode.CreateAssociativeList:
+                    if (reader.Int() < 0) throw Fault(frame, offset, $"{role} initializer has an invalid list length.");
+                    break;
+                case DreamProcOpcode.CreateMultidimensionalList:
+                    var dimensions = reader.Int();
+                    if (dimensions < 0 || dimensions > 32)
+                        throw Fault(frame, offset, $"{role} initializer dimension count exceeds the supported limit.");
                     break;
                 case DreamProcOpcode.PushNFloats: case DreamProcOpcode.PushNStrings:
                 case DreamProcOpcode.CreateListNFloats: case DreamProcOpcode.CreateListNStrings: case DreamProcOpcode.CreateListNResources:
                     var count = reader.Int();
                     if (count < 0 || count > (reader.Length - reader.Position) / 4)
-                        throw Fault(frame, offset, "Area initializer has an invalid literal list length.");
+                        throw Fault(frame, offset, $"{role} initializer has an invalid literal list length.");
                     for (var i = 0; i < count; i++) {
                         if (opcode is DreamProcOpcode.CreateListNFloats or DreamProcOpcode.PushNFloats) reader.Float();
                         else Project.String(reader.Int());
                     }
+                    break;
+                case DreamProcOpcode.PushNOfStringFloats:
+                    var pairCount = reader.Int();
+                    if (pairCount < 0 || pairCount > (reader.Length - reader.Position) / 8)
+                        throw Fault(frame, offset, $"{role} initializer has an invalid string/float literal count.");
+                    for (var i = 0; i < pairCount; i++) { Project.String(reader.Int()); reader.Float(); }
                     break;
                 case DreamProcOpcode.PushStringFloat:
                     Project.String(reader.Int()); reader.Float(); break;
@@ -400,11 +434,11 @@ public sealed class DmRuntime {
                     var reference = reader.Reference();
                     var kind = reader.Byte(); var argc = reader.Int();
                     if (reference.Kind != 6 || kind is not (0 or 4) || argc != 0)
-                        throw Fault(frame, offset, "Area initializer calls other than argument-free super initialization are not implemented.");
-                    if (SuperProc(proc) is { } parent) ValidateAreaInitializer(area, parent, visited);
+                        throw Fault(frame, offset, $"{role} initializer calls other than argument-free super initialization are not implemented.");
+                    if (SuperProc(proc) is { } parent) ValidateMapInitializer(area, parent, visited, role);
                     break;
                 default:
-                    throw Fault(frame, offset, $"Area initializer opcode {opcode} is not implemented; only local literal/list defaults are supported.");
+                    throw Fault(frame, offset, $"{role} initializer opcode {opcode} is not implemented; only local literal/list defaults are supported.");
             }
         }
     }
@@ -587,10 +621,41 @@ public sealed class DmRuntime {
                         if (index != values.Length) throw new CompatibilityException("Unused interpolation values.");
                         frame.Push(result.ToString()); break;
                     }
-                    case DreamProcOpcode.CreateList: { var list = new DmList(); list.Values.AddRange(frame.PopMany(frame.Reader.Int())); frame.Push(new(list)); break; }
+                    case DreamProcOpcode.CreateList: {
+                        var count = frame.Reader.Int();
+                        if (count < 0 || count > frame.Stack.Count) throw new CompatibilityException("Invalid list value count.");
+                        ChargeListAllocation(1L + count);
+                        var values = frame.PopMany(count);
+                        var list = new DmList(); list.Values.AddRange(values); frame.Push(new(list)); break;
+                    }
+                    case DreamProcOpcode.CreateAssociativeList: {
+                        var count = frame.Reader.Int();
+                        if (count < 0 || count > frame.Stack.Count / 2)
+                            throw new CompatibilityException("Invalid associative list pair count.");
+                        ChargeListAllocation(1L + count * 2L);
+                        var pairs = frame.PopMany(count * 2);
+                        var list = new DmList();
+                        for (var i = 0; i < pairs.Length; i += 2) {
+                            var key = pairs[i]; var value = pairs[i + 1];
+                            if (key.IsNull) list.Values.Add(value);
+                            else if (key.Value is float number) {
+                                var index = BoundedListInteger(number);
+                                if (index == list.Values.Count + 1) list.Values.Add(value);
+                                else list.Set(index, value);
+                            } else list.Set(key, value);
+                        }
+                        frame.Push(new(list)); break;
+                    }
+                    case DreamProcOpcode.CreateMultidimensionalList: {
+                        var count = frame.Reader.Int();
+                        if (count < 0 || count > 32) throw new CompatibilityException("List dimension count exceeds the supported limit.");
+                        frame.Push(new(CreateDimensionedList(frame.PopMany(count)))); break;
+                    }
                     case DreamProcOpcode.CreateListNFloats: case DreamProcOpcode.CreateListNStrings:
                     case DreamProcOpcode.CreateListNResources: case DreamProcOpcode.CreateListNRefs: {
                         var count = frame.Reader.Int();
+                        if (count < 0) throw new CompatibilityException("Invalid literal list length.");
+                        ChargeListAllocation(1L + count);
                         var list = new DmList();
                         for (var i = 0; i < count; i++) list.Values.Add(opcode switch {
                             DreamProcOpcode.CreateListNFloats => new(frame.Reader.Float()),
@@ -610,12 +675,59 @@ public sealed class DmRuntime {
                             DreamProcOpcode.PushNRefs => Get(frame, frame.Reader.Reference()),
                             DreamProcOpcode.PushNFloats => new(frame.Reader.Float()), _ => new(Project.String(frame.Reader.Int())) }); break;
                     }
+                    case DreamProcOpcode.PushNOfStringFloats: {
+                        var count = frame.Reader.Int();
+                        if (count < 0 || count > (frame.Reader.Length - frame.Reader.Position) / 8)
+                            throw new CompatibilityException("Invalid string/float literal count.");
+                        for (var i = 0; i < count; i++) {
+                            frame.Push(Project.String(frame.Reader.Int())); frame.Push(frame.Reader.Float());
+                        }
+                        break;
+                    }
                     case DreamProcOpcode.PushStringFloat: frame.Push(Project.String(frame.Reader.Int())); frame.Push(frame.Reader.Float()); break;
                     default: throw new CompatibilityException($"Opcode {opcode} (0x{(byte)opcode:X2}) is not implemented.");
                 }
             } catch (CompatibilityException ex) { throw Fault(frame, offset, ex.Message, ex); }
             catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentOutOfRangeException or InvalidOperationException or KeyNotFoundException) { throw Fault(frame, offset, $"Malformed or unsupported execution: {ex.Message}", ex); }
         }
+    }
+
+    private void ChargeListAllocation(long count) {
+        if (count < 0 || count > _listAllocationRemaining)
+            throw new CompatibilityException("List allocation budget exhausted.");
+        _listAllocationRemaining -= (int)count;
+    }
+
+    private static int BoundedListInteger(float value) {
+        var truncated = Math.Truncate((double)value);
+        if (!double.IsFinite(truncated) || truncated < int.MinValue || truncated > int.MaxValue)
+            throw new CompatibilityException("Non-finite or out-of-range list size/index is not implemented.");
+        return (int)truncated;
+    }
+
+    private DmList CreateDimensionedList(DmValue[] dimensions) {
+        var sizes = dimensions.Select(value => value.Value is float number ? BoundedListInteger(number) : 0).ToArray();
+        if (sizes.Length == 1 && sizes[0] < 0)
+            throw new CompatibilityException("Negative single-dimension list size is not implemented.");
+        for (var i = 0; i < sizes.Length; i++) sizes[i] = Math.Max(0, sizes[i]);
+        // Preflight the entire graph before allocation. Count each list and value slot,
+        // including empty child lists; zero dimensions still constructs the root list.
+        long cost = 1, parents = 1;
+        for (var i = 0; i < sizes.Length; i++) {
+            var entries = parents * sizes[i];
+            cost += entries * (i < sizes.Length - 1 ? 2 : 1);
+            if (cost > _listAllocationRemaining) throw new CompatibilityException("List allocation budget exhausted.");
+            parents = entries;
+        }
+        ChargeListAllocation(cost);
+        DmList Build(int dimension) {
+            var list = new DmList();
+            if (dimension == sizes.Length) return list;
+            for (var i = 0; i < sizes[dimension]; i++)
+                list.Values.Add(dimension + 1 == sizes.Length ? DmValue.Null : new DmValue(Build(dimension + 1)));
+            return list;
+        }
+        return Build(0);
     }
 
     private DmValue LocateCoordinates(DmValue x, DmValue y, DmValue z) {

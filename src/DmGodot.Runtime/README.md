@@ -41,7 +41,7 @@ revision and opcode hash are checked separately by the build tooling and loader.
   null. Non-finite numbers and truncated values outside the signed 32-bit integer
   range raise source-located compatibility errors; host overflow casts are unsupported.
   Type/tag/container `locate()` and native contents views remain unsupported.
-- Initializes map-area user variables from literal constants and fresh positional
+- Initializes map-area user variables from literal constants and fresh positional, associative and dimensioned
   list literals, including nested lists and inherited initializer overrides. The entire
   inherited initializer chain is checked before that area's code executes. Only compiler
   initializer super calls and own user-field assignments are accepted: helpers, reads,
@@ -49,6 +49,25 @@ revision and opcode hash are checked separately by the build tooling and loader.
   remain errors. Constructor-time initialization has a fixed aggregate 100,000-instruction
   budget (the configurable InstructionBudget applies after construction). This narrow
   subset has no observable preboot effects; it does not implement general startup phases.
+- Preflights every mapped movable's complete initializer chain during loading, using
+  the same literal-only validator as areas. Each movable's initializer then runs once
+  at its own Boot position, after all turf New prefixes and immediately before its New.
+  Initializers receive no arguments and cannot read src/usr/loc, other fields, globals,
+  or call helpers. The map location is retained eagerly; this restricted subset cannot
+  observe that difference from upstream's init-then-native-loc ordering.
+- Ordinary associative list literals preserve ordered entries, duplicate-key replacement,
+  null-key positional entries, list/object key identity and numeric positional writes.
+  Numeric list indices truncate toward zero; constructor writes may append exactly at
+  length+1, but gaps and zero indices fail. Numeric replacement preserves existing
+  associations, matching pinned upstream. This is not the distinct `alist` type.
+- Dimensioned lists create distinct intermediate lists and null leaves. Finite numeric
+  dimensions truncate; nonnumbers become zero; negative dimensions in multidimensional
+  constructors become zero. Negative single dimensions are explicitly unsupported
+  (upstream exposes a configurable negative-size exception). Nonfinite/out-of-range
+  sizes and constructor numeric keys fail explicitly. Constructors have a 32-dimension
+  limit and an aggregate budget of 100,000 list objects/value slots per constructor,
+  Boot, InvokeGlobal or AdvanceBy execution boundary; associative pairs conservatively
+  consume two slots. The instruction budget remains separate.
 - Starts static map `New()` callbacks after nonyielding global initialization: unique
   grid areas in ascending z/y/x order, then an unused default area, turfs in ascending z
   and descending y/x order, then movables in map/block order with bottom-up rows and
@@ -87,8 +106,8 @@ fixture/testing entry point, not a complete BYOND verb dispatch implementation.
 
 This is **not a complete BYOND world runtime**. Static map objects now retain identity;
 the host's initial avatar/movement protocol does not execute DM Login, Move,
-Enter/Exit, or collision callbacks. Executable world/turf/movable type
-initializers and area initializers outside the local-literal subset, sparse/overlapping maps, and map entity/area overrides are rejected
+Enter/Exit, or collision callbacks. Executable world/turf type
+initializers and area/movable initializers outside the local-literal subset, sparse/overlapping maps, and map entity/area overrides are rejected
 rather than silently ignored. Static identities are eagerly allocated before New;
 contents/type enumeration and dynamic atom creation remain unavailable, so this
 slice does not claim general construction timing parity. The default area is retained
@@ -103,7 +122,7 @@ those fields remains rejected so retained objects cannot silently diverge from s
 Direct mapped-object output also fails until native name/stringification is implemented.
 Ordinary user-declared variables remain readable and writable.
 Full containment/movement, native managed object creation,
-GC/deletion, associative-list construction, dynamic calls, native interfaces,
+GC/deletion, strict associative lists (`alist`), dynamic calls, native interfaces,
 files, database APIs, persistence, browser UI, resources/rendering, and most
 built-ins still need implementation. Constant tagged resources retain paths;
 this runtime does not load their image bytes. Unimplemented runtime-managed world
@@ -133,7 +152,9 @@ python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/map-new.dme --ou
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/area-init.dme --output build/area-init.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/area-init.dme --output build/area-init-optimized.json --optimize
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/turf-name.dme --output build/turf-name.json
-dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json build/area-init.json build/area-init-optimized.json build/turf-name.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/movable-init.dme --output build/movable-init.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/movable-init.dme --output build/movable-init-optimized.json --optimize
+dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json build/area-init.json build/area-init-optimized.json build/turf-name.json build/movable-init.json build/movable-init-optimized.json
 ```
 
 Tests exercise code emitted by the real compiler, scheduler interactions, map
@@ -143,3 +164,21 @@ Empty methods owned by ordinary user datum types return null. The pinned compile
 JSON has no native flag, so empty built-in-owner and global procedures remain
 explicit compatibility errors (apart from the existing New/Del defaults). This
 uses the pinned native registry's absence of custom ordinary-datum native owners.
+
+## Pinned initialization/list evidence
+
+The contract above follows OpenDream revision
+`846775a06b8fa4639772cb3e759adcc0133d9711`:
+[InitializeAtoms / LoadMapObjectsAndMobs](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Map/DreamMapManager.cs),
+[InitDreamObjectState.Resume](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/InitDreamObject.cs),
+[DreamObjectMovable.Initialize](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Objects/Types/DreamObjectMovable.cs),
+[ordinary list constructor opcodes](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/DMOpcodeHandlers.cs),
+and [DreamList.Initialize/Set](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Objects/Types/DreamList.cs).
+
+Mapped movable initialization occurs after StartWorld sets Initialized=true, so
+upstream nested object construction would run New. This subset rejects nested new
+and does not reuse prestart New suppression. Eagerly retained movable identities
+are still a limitation of the static map model, not full allocation-phase parity.
+Pinned Civ13's map_metadata also declares numeric-key `alist` values and has an
+effectful New; ordinary list initializer support does not establish Civ13 boot or
+gameplay compatibility. Compiler-mode fixtures are not BYOND differential results.

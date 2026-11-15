@@ -46,15 +46,19 @@ public sealed class DmList {
     public Dictionary<DmValue, DmValue> Associations { get; } = [];
     public DmValue Get(DmValue index) {
         if (index.Value is float n) {
-            if (n != MathF.Truncate(n) || n < 1 || n > Values.Count) throw new CompatibilityException("DM list index out of bounds.");
-            return Values[(int)n - 1];
+            return Values[NumericIndex(n)];
         }
         return Associations.GetValueOrDefault(index);
     }
+    private int NumericIndex(float number) {
+        var index = Math.Truncate((double)number);
+        if (!double.IsFinite(index) || index < 1 || index > Values.Count)
+            throw new CompatibilityException("DM list index out of bounds.");
+        return (int)index - 1;
+    }
     public void Set(DmValue index, DmValue value) {
         if (index.Value is float n) {
-            if (n != MathF.Truncate(n) || n < 1 || n > Values.Count) throw new CompatibilityException("DM list index out of bounds.");
-            Values[(int)n - 1] = value;
+            Values[NumericIndex(n)] = value;
         } else {
             if (!Values.Contains(index)) Values.Add(index);
             Associations[index] = value;

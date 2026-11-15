@@ -60,6 +60,16 @@ revision and opcode hash are checked separately by the build tooling and loader.
   Numeric list indices truncate toward zero; constructor writes may append exactly at
   length+1, but gaps and zero indices fail. Numeric replacement preserves existing
   associations, matching pinned upstream. This is not the distinct `alist` type.
+- Strict associative list literals (`alist`) use a separate reference-identity value.
+  Every constructor pair is a dictionary entry, including null keys. Numeric keys are
+  exact float32 values, never positional indices: zero, negative values, fractions,
+  infinities and NaN are retained. Float equality treats signed zero as equal and
+  repeated NaN keys as equal. Duplicate keys replace values without increasing length;
+  list, alist and datum keys retain reference identity. Missing keys read as null.
+  Index reads/writes, `length()` and `.len` reads work; even empty alists are truthy.
+  Constructor allocation is charged before materialization; indexed insertion charges
+  two slots only for a new key, and rejects an over-budget insertion before mutation.
+  Fresh inherited alist/nested-list initializer values are never cached as defaults.
 - Dimensioned lists create distinct intermediate lists and null leaves. Finite numeric
   dimensions truncate; nonnumbers become zero; negative dimensions in multidimensional
   constructors become zero. Negative single dimensions are explicitly unsupported
@@ -122,7 +132,7 @@ those fields remains rejected so retained objects cannot silently diverge from s
 Direct mapped-object output also fails until native name/stringification is implemented.
 Ordinary user-declared variables remain readable and writable.
 Full containment/movement, native managed object creation,
-GC/deletion, strict associative lists (`alist`), dynamic calls, native interfaces,
+GC/deletion, strict-list operators/enumeration/native methods, dynamic calls, native interfaces,
 files, database APIs, persistence, browser UI, resources/rendering, and most
 built-ins still need implementation. Constant tagged resources retain paths;
 this runtime does not load their image bytes. Unimplemented runtime-managed world
@@ -154,7 +164,9 @@ python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/area-init.dme --
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/turf-name.dme --output build/turf-name.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/movable-init.dme --output build/movable-init.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/movable-init.dme --output build/movable-init-optimized.json --optimize
-dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json build/area-init.json build/area-init-optimized.json build/turf-name.json build/movable-init.json build/movable-init-optimized.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/alist.dme --output build/alist.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/alist.dme --output build/alist-optimized.json --optimize
+dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json build/area-init.json build/area-init-optimized.json build/turf-name.json build/movable-init.json build/movable-init-optimized.json build/alist.json build/alist-optimized.json
 ```
 
 Tests exercise code emitted by the real compiler, scheduler interactions, map
@@ -179,6 +191,15 @@ Mapped movable initialization occurs after StartWorld sets Initialized=true, so
 upstream nested object construction would run New. This subset rejects nested new
 and does not reuse prestart New suppression. Eagerly retained movable identities
 are still a limitation of the static map model, not full allocation-phase parity.
-Pinned Civ13's map_metadata also declares numeric-key `alist` values and has an
-effectful New; ordinary list initializer support does not establish Civ13 boot or
-gameplay compatibility. Compiler-mode fixtures are not BYOND differential results.
+Pinned Civ13's map_metadata declares numeric-key `alist` values and has an
+effectful New; list initializer support does not establish Civ13 boot or gameplay
+compatibility. Strict-list type/islist/istype introspection, stringification, field
+writes (including len/type), operators, enumeration, native methods and direct
+new /alist remain explicit errors. Compiler JSON tag 6 remains unsupported rather
+than introducing mutable alists into the immutable default cache. Compiler-mode fixtures are not BYOND differential results.
+
+Strict-list behavior additionally follows
+[DreamAssocList.Set/GetElement/GetLength](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Objects/Types/DreamAssocList.cs)
+and `DMOpcodeHandlers.CreateStrictAssociativeList` at the same revision.
+Bare `null = value` in source is parsed as the string key "null"; `(null) = value`
+retains a true null key. Both forms are covered by compiler-mode fixtures.

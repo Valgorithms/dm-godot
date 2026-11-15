@@ -404,7 +404,7 @@ public sealed class DmRuntime {
                 case DreamProcOpcode.ReturnReferenceValue:
                     if (reader.Reference().Kind != 2) throw Fault(frame, offset, $"{role} initializer reference reads are not implemented.");
                     break;
-                case DreamProcOpcode.CreateList: case DreamProcOpcode.CreateAssociativeList:
+                case DreamProcOpcode.CreateList: case DreamProcOpcode.CreateAssociativeList: case DreamProcOpcode.CreateStrictAssociativeList:
                     if (reader.Int() < 0) throw Fault(frame, offset, $"{role} initializer has an invalid list length.");
                     break;
                 case DreamProcOpcode.CreateMultidimensionalList:
@@ -628,6 +628,16 @@ public sealed class DmRuntime {
                         var values = frame.PopMany(count);
                         var list = new DmList(); list.Values.AddRange(values); frame.Push(new(list)); break;
                     }
+                    case DreamProcOpcode.CreateStrictAssociativeList: {
+                        var count = frame.Reader.Int();
+                        if (count < 0 || count > frame.Stack.Count / 2)
+                            throw new CompatibilityException("Invalid strict associative list pair count.");
+                        ChargeListAllocation(1L + count * 2L);
+                        var pairs = frame.PopMany(count * 2);
+                        var list = new DmAssocList();
+                        for (var i = 0; i < pairs.Length; i += 2) list.Set(pairs[i], pairs[i + 1]);
+                        frame.Push(new(list)); break;
+                    }
                     case DreamProcOpcode.CreateAssociativeList: {
                         var count = frame.Reader.Int();
                         if (count < 0 || count > frame.Stack.Count / 2)
@@ -665,11 +675,11 @@ public sealed class DmRuntime {
                         });
                         frame.Push(new(list)); break;
                     }
-                    case DreamProcOpcode.DereferenceIndex: { var index = frame.Pop(); var list = frame.Pop().Value as DmList ?? throw new CompatibilityException("Only list indexing is implemented."); frame.Push(list.Get(index)); break; }
+                    case DreamProcOpcode.DereferenceIndex: { var index = frame.Pop(); frame.Push(ReadIndex(frame.Pop(), index)); break; }
                     case DreamProcOpcode.DereferenceField: { var name = Project.String(frame.Reader.Int()); frame.Push(Field(frame.Pop(), name)); break; }
                     case DreamProcOpcode.PushRefAndDereferenceField: { var value = Get(frame, frame.Reader.Reference()); frame.Push(Field(value, Project.String(frame.Reader.Int()))); break; }
                     case DreamProcOpcode.IsNull: frame.Push(frame.Pop().IsNull ? 1 : 0); break;
-                    case DreamProcOpcode.Length: { var value = frame.Pop().Value; frame.Push(value switch { string text => text.Length, DmList list => list.Values.Count, null => 0, _ => throw new CompatibilityException("length() on this value is not implemented.") }); break; }
+                    case DreamProcOpcode.Length: { var value = frame.Pop().Value; frame.Push(value switch { string text => text.Length, DmList list => list.Values.Count, DmAssocList list => list.Count, null => 0, _ => throw new CompatibilityException("length() on this value is not implemented.") }); break; }
                     case DreamProcOpcode.PushNRefs: case DreamProcOpcode.PushNFloats: case DreamProcOpcode.PushNStrings: {
                         var count = frame.Reader.Int(); for (var i = 0; i < count; i++) frame.Push(opcode switch {
                             DreamProcOpcode.PushNRefs => Get(frame, frame.Reader.Reference()),
@@ -779,6 +789,10 @@ public sealed class DmRuntime {
     }
     private DmValue Field(DmValue owner, string name) {
         if (owner.Value is DmList list && name == "len") return list.Values.Count;
+        if (owner.Value is DmAssocList associative) {
+            if (name == "len") return associative.Count;
+            throw new CompatibilityException($"alist.{name} is not implemented.");
+        }
         if (owner.Value is not DmObject obj) throw new CompatibilityException($"Cannot read field '{name}' on this value.");
         if (ReferenceEquals(obj, World)) {
             if (BuiltinWorldFields.Contains(name) && !ReadableWorldFields.Contains(name))
@@ -814,7 +828,12 @@ public sealed class DmRuntime {
         7 => Index(frame),
         _ => throw new CompatibilityException($"Read reference kind {reference.Kind} is not implemented.")
     };
-    private static DmValue Index(Frame frame) { var index = frame.Pop(); var list = frame.Pop().Value as DmList ?? throw new CompatibilityException("Only list indexing is implemented."); return list.Get(index); }
+    private static DmValue ReadIndex(DmValue owner, DmValue index) => owner.Value switch {
+        DmList list => list.Get(index),
+        DmAssocList list => list.Get(index),
+        _ => throw new CompatibilityException("Only list indexing is implemented.")
+    };
+    private static DmValue Index(Frame frame) { var index = frame.Pop(); return ReadIndex(frame.Pop(), index); }
     private void Set(Frame frame, Reference reference, DmValue value) {
         switch (reference.Kind) {
             case 2: frame.Result = value; break;
@@ -823,11 +842,23 @@ public sealed class DmRuntime {
             case 10: _globals[reference.Value] = value; break;
             case 12: SetField(frame.Pop(), Project.String(reference.Value), value); break;
             case 13: SetField(new(frame.Src), Project.String(reference.Value), value); break;
-            case 7: { var index = frame.Pop(); var list = frame.Pop().Value as DmList ?? throw new CompatibilityException("Only list indexing is implemented."); list.Set(index, value); break; }
+            case 7: {
+                var index = frame.Pop();
+                switch (frame.Pop().Value) {
+                    case DmList list: list.Set(index, value); break;
+                    case DmAssocList list:
+                        if (!list.ContainsKey(index)) ChargeListAllocation(2);
+                        list.Set(index, value);
+                        break;
+                    default: throw new CompatibilityException("Only list indexing is implemented.");
+                }
+                break;
+            }
             default: throw new CompatibilityException($"Write reference kind {reference.Kind} is not implemented.");
         }
     }
     private void SetField(DmValue owner, string name, DmValue value) {
+        if (owner.Value is DmAssocList) throw new CompatibilityException($"Mutation of alist.{name} is not implemented.");
         if (owner.Value is not DmObject obj || !obj.Variables.ContainsKey(name)) throw new CompatibilityException($"Cannot assign field '{name}'.");
         if (_mapLocations.ContainsKey(obj) && ProtectedMapField(obj, name))
             throw new CompatibilityException($"Mutation of map atom.{name} is not implemented.");

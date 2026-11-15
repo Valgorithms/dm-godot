@@ -1,0 +1,6 @@
+"a" = (/obj/holder/inherited,/obj/holder/inherited,/turf/plain,/area/plain)
+"b" = (/obj/holder/replaced,/obj/holder/nulled,/turf/plain,/area/plain)
+
+(1,1,1) = {"
+ab
+"}

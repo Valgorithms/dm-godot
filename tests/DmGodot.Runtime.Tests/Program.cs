@@ -785,7 +785,7 @@ foreach (var artifact in new[] { movableInitPath, movableInitOptimizedPath }) {
         runtime.InvokeGlobal("single_dimension", 3);
         Check(((DmList)runtime.GetGlobal("result").Value!).Values.Count == 3, "Next public execution boundary failed to reset budget.");
     }));
-    foreach (var unsafeType in new[] { "/obj/unsafe_helper", "/obj/unsafe_sleep", "/obj/unsafe_read", "/obj/unsafe_native", "/obj/unsafe_new", "/obj/local/unsafe_child", "/obj/unsafe_alist" })
+    foreach (var unsafeType in new[] { "/obj/unsafe_helper", "/obj/unsafe_sleep", "/obj/unsafe_read", "/obj/unsafe_native", "/obj/unsafe_new", "/obj/local/unsafe_child" })
         tests.Add(($"mapped initializer preflight rejects {unsafeType}: {artifact}", () => {
             var json = JsonNode.Parse(File.ReadAllText(artifact))!;
             // Last instance is unsafe: validation must finish before any Boot effects.
@@ -795,9 +795,123 @@ foreach (var artifact in new[] { movableInitPath, movableInitOptimizedPath }) {
                 throw new Exception("Unsupported movable initializer accepted.");
             } catch (CompatibilityException ex) {
                 Check(ex.Message.Contains("Movable initializer") && ex.Message.Contains("movable-init.dm:"), "Missing source-located preflight diagnostic: " + ex.Message);
-                if (unsafeType == "/obj/unsafe_alist") Check(ex.Message.Contains("StrictAssociativeList"), "alist must retain explicit opcode boundary.");
             }
         }));
+}
+
+var alistPath = args.Length > 9 ? args[9] : "build/alist.json";
+var alistOptimizedPath = args.Length > 10 ? args[10] : "build/alist-optimized.json";
+foreach (var artifact in new[] { alistPath, alistOptimizedPath }) {
+    DmRuntime AlistRuntime() { var runtime = new DmRuntime(CompiledProject.Load(artifact)) { InstructionBudget = 2_000_000 }; runtime.Boot(); return runtime; }
+    tests.Add(($"strict associative literals retain exact keys: {artifact}", () => {
+        var runtime = AlistRuntime(); runtime.InvokeGlobal("key_literals");
+        var list = (DmAssocList)runtime.GetGlobal("result").Value!;
+        Check(list.Count == 6 && list.Get(0).ToString() == "updated" && list.Get(-1).ToString() == "negative", "Numeric keys were positional or duplicates changed length.");
+        Check(list.Get(2.9f).ToString() == "fraction" && list.Get(2).IsNull, "Fractional key was truncated.");
+        Check(list.Get(DmValue.Null).ToString() == "true-null" && list.Get("null").ToString() == "named-null", "True null and parser string-null keys collided.");
+        Check(list.ContainsKey("empty") && list.Get("empty").IsNull && !list.ContainsKey("absent"), "Unkeyed entry or absent key changed.");
+        runtime.InvokeGlobal("lengths", new DmValue(list));
+        Check(((DmList)runtime.GetGlobal("result").Value!).Values.All(v => v.Number == 6), "length/len dispatch lost strict list entries.");
+        runtime.InvokeGlobal("exact_index", new DmValue(list), 2.9f);
+        Check(runtime.GetGlobal("result").ToString() == "fraction", "Strict index read used ordinary positional coercion.");
+        runtime.InvokeGlobal("index_update", new DmValue(list), 0, 7);
+        runtime.InvokeGlobal("compound_index", new DmValue(list), 0);
+        Check(runtime.GetGlobal("result").Number == 8 && list.Count == 6, "Reference-index update/read or duplicate assignment changed.");
+    }));
+    tests.Add(($"strict numeric keys preserve infinities NaN and signed zero: {artifact}", () => {
+        var runtime = AlistRuntime();
+        runtime.InvokeGlobal("numeric_keys", new DmValue(float.PositiveInfinity), new DmValue(float.NegativeInfinity), new DmValue(float.NaN));
+        var list = (DmAssocList)runtime.GetGlobal("result").Value!;
+        Check(list.Count == 3 && list.Get(new(float.PositiveInfinity)).Number == 1 && list.Get(new(float.NegativeInfinity)).Number == 2 &&
+            list.Get(new(float.NaN)).Number == 3, "Nonfinite keys were rejected or conflated.");
+        runtime.InvokeGlobal("numeric_keys", 0f, -0f, new DmValue(float.NaN));
+        list = (DmAssocList)runtime.GetGlobal("result").Value!;
+        Check(list.Count == 2 && list.Get(0).Number == 2, "Signed zero equality differs from pinned value equality.");
+        runtime.InvokeGlobal("index_update", new DmValue(list), new DmValue(float.NaN), 9);
+        Check(list.Count == 2 && list.Get(new(float.NaN)).Number == 9, "Repeated NaN key did not replace its value.");
+    }));
+    tests.Add(($"strict list object and collection keys use reference identity: {artifact}", () => {
+        var runtime = AlistRuntime(); runtime.InvokeGlobal("identity_keys");
+        var list = (DmAssocList)runtime.GetGlobal("result").Value!;
+        Check(list.Count == 4 && list.Get(runtime.GetGlobal("key_one")).Number == 1 && list.Get(runtime.GetGlobal("key_two")).Number == 2 &&
+            list.Get(runtime.GetGlobal("strict_one")).Number == 3 && list.Get(runtime.GetGlobal("strict_two")).Number == 4, "Equal-content collection keys collided.");
+        runtime.InvokeGlobal("object_keys");
+        list = (DmAssocList)runtime.GetGlobal("result").Value!;
+        Check(list.Count == 2 && list.Get(runtime.GetGlobal("key_one")).Number == 1 && list.Get(runtime.GetGlobal("key_two")).Number == 2, "Datum keys lost identity.");
+        runtime.InvokeGlobal("value_properties");
+        Check(((DmList)runtime.GetGlobal("result").Value!).Values.Select(v => v.Number).SequenceEqual(new float[] { 1, 0, 1, 0, 0 }), "Strict lists lost identity equality, truthiness or empty length.");
+    }));
+    tests.Add(($"strict inherited mutable defaults run per instance at Boot: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact));
+        var objects = runtime.MapCells.SelectMany(c => c.Entities).ToArray();
+        Check(objects.All(o => o.Variables["items"].IsNull), "Strict initializer ran before Boot.");
+        runtime.Boot();
+        var first = (DmAssocList)objects[0].Variables["items"].Value!;
+        var second = (DmAssocList)objects[1].Variables["items"].Value!;
+        Check(!ReferenceEquals(first, second) && !ReferenceEquals(first.Get(0).Value, second.Get(0).Value), "Strict/nested list defaults are shared.");
+        ((DmList)first.Get(0).Value!).Values[0] = 77;
+        Check(((DmList)second.Get(0).Value!).Values[0].Number == 1, "Nested mutation leaked.");
+        Check(((DmList)((DmAssocList)objects[2].Variables["items"].Value!).Get(0).Value!).Values[0].Number == 9 &&
+            objects[3].Variables["items"].IsNull, "Child initializer override order changed.");
+        Check(objects.All(o => o.Variables["new_count"].Number == 1) && objects.Select(o => o.Variables["empty"].Value).Distinct().Count() == 4, "New counts or fresh empty defaults changed.");
+    }));
+    foreach (var (proc, error) in new[] {
+        ("type_guard", "alist.type"), ("islist_guard", "islist"), ("istype_guard", "not implemented"),
+        ("string_guard", "stringification"), ("output_guard", "stringification"),
+        ("operator_guard", "Expected a DM number"), ("enumeration_guard", "not implemented"),
+        ("native_guard", "non-object receiver"), ("new_guard", "native/atom"),
+        ("len_write_guard", "Mutation of alist.len"), ("type_write_guard", "Mutation of alist.type")
+    }) tests.Add(($"strict unsupported operation stays explicit {proc}: {artifact}", () => {
+        var runtime = AlistRuntime();
+        Throws(() => runtime.InvokeGlobal(proc), error);
+    }));
+    tests.Add(($"strict list insertion budget charges new keys only: {artifact}", () => {
+        var runtime = AlistRuntime();
+        Throws(() => runtime.InvokeGlobal("growth_budget"), "allocation budget");
+        var list = (DmAssocList)runtime.GetGlobal("result").Value!;
+        Check(list.Count == 49_999 && list.Get(49_999).Number == 49_999 && !list.ContainsKey(50_000), "Rejected insertion mutated the list or escaped the budget.");
+        runtime.InvokeGlobal("overwrite_budget");
+        list = (DmAssocList)runtime.GetGlobal("result").Value!;
+        Check(list.Count == 1 && list.Get(0).Number == 60_000, "Overwriting an existing key consumed new-key budget.");
+    }));
+    foreach (var count in new[] { -1, 1, int.MaxValue })
+        tests.Add(($"strict malformed pair count is rejected {count}: {artifact}", () => {
+            var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+            var proc = json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "probe")!;
+            proc["Bytecode"] = Convert.ToBase64String(new[] { (byte)DreamProcOpcode.CreateStrictAssociativeList }.Concat(BitConverter.GetBytes(count)).Append((byte)DreamProcOpcode.Return).ToArray());
+            var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+            Throws(() => runtime.InvokeGlobal("probe"), "strict associative list pair count");
+        }));
+    tests.Add(($"strict constructor allocation is bounded before materialization: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        using var bytes = new MemoryStream();
+        using (var writer = new BinaryWriter(bytes, System.Text.Encoding.UTF8, true)) {
+            writer.Write((byte)DreamProcOpcode.PushNFloats); writer.Write(100_000);
+            for (var i = 0; i < 100_000; i++) writer.Write(0f);
+            writer.Write((byte)DreamProcOpcode.CreateStrictAssociativeList); writer.Write(50_000);
+            writer.Write((byte)DreamProcOpcode.Return);
+        }
+        json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "probe")!["Bytecode"] = Convert.ToBase64String(bytes.ToArray());
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        Throws(() => runtime.InvokeGlobal("probe"), "allocation budget");
+    }));
+    tests.Add(($"strict truncated pair operand stays rejected by loader: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "probe")!["Bytecode"] =
+            Convert.ToBase64String(new byte[] { (byte)DreamProcOpcode.CreateStrictAssociativeList, 1 });
+        Throws(() => CompiledProject.Parse(json.ToJsonString()), "truncated");
+    }));
+    foreach (var type in new[] { "/obj/unsafe_alist_helper", "/obj/unsafe_alist_read", "/obj/unsafe_alist_native" })
+        tests.Add(($"strict initializer does not widen effect permission {type}: {artifact}", () => {
+            var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+            json["Maps"]![0]!["CellDefinitions"]!["b"]!["Objects"]![1]!["Type"] = TypeId(json, type);
+            Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Movable initializer");
+        }));
+    tests.Add(($"strict tagged compiler constant stays out of shared defaults: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        json["Types"]![TypeId(json, "/obj/holder")]!["Variables"]!["items"] = new JsonObject { ["type"] = 6, ["values"] = new JsonArray() };
+        Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Compiler value kind 6");
+    }));
 }
 
 var failed = 0;

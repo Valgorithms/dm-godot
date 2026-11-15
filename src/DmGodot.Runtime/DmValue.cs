@@ -13,6 +13,7 @@ public readonly record struct DmValue(object? Value) {
         null => "", float n => n.ToString("G9", CultureInfo.InvariantCulture), string s => s,
         DmTypeReference t => t.Path, DmResource r => r.Path, DmObject o => o.Variables.TryGetValue("name", out var n) && !n.IsNull ? n.ToString() : o.TypePath,
         DmList => throw new CompatibilityException("List stringification is not implemented."),
+        DmAssocList => throw new CompatibilityException("Strict associative list stringification is not implemented."),
         _ => throw new CompatibilityException($"Unsupported DM value {Value.GetType().Name}.")
     };
     public static implicit operator DmValue(float value) => new(value);
@@ -64,6 +65,14 @@ public sealed class DmList {
             Associations[index] = value;
         }
     }
+}
+/// <summary>Strict associative lists have exact keys, including null and numbers.</summary>
+public sealed class DmAssocList {
+    private readonly Dictionary<DmValue, DmValue> _pairs = [];
+    public int Count => _pairs.Count;
+    public bool ContainsKey(DmValue key) => _pairs.ContainsKey(key);
+    public DmValue Get(DmValue key) => _pairs.GetValueOrDefault(key);
+    public void Set(DmValue key, DmValue value) => _pairs[key] = value;
 }
 public sealed record WorldTile(int X, int Y, int Z, bool Density, string Type, string? Color = null);
 public sealed record MapEntity(int X, int Y, int Z, string Type);

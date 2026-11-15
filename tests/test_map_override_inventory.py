@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from check_civ13_compile import map_override_inventory
+from check_civ13_compile import map_override_inventory, map_storage_inventory
 
 
 class MapOverrideInventoryTests(unittest.TestCase):
@@ -72,6 +72,75 @@ class MapOverrideInventoryTests(unittest.TestCase):
         self.assertEqual(report["entries"], [])
         self.assertIn("no runtime support", report["scope"])
 
+
+class MapStorageInventoryTests(unittest.TestCase):
+    def fixture(self):
+        return {
+            "Types": [
+                {"Path": "/", "Variables": {"shared": 1}},
+                {"Path": "/world", "Parent": 0, "Variables": {"area": {"type": 1, "value": 3}, "turf": {"type": 1, "value": 2}}},
+                {"Path": "/turf", "Parent": 0, "Variables": {"shared": 2, "local": 3}},
+                {"Path": "/area", "Parent": 0},
+                {"Path": "/area/used", "Parent": 3},
+                {"Path": "/obj", "Parent": 0, "InitProc": 0},
+                {"Path": "/obj/child", "Parent": 5, "Variables": {"extra": None}},
+            ],
+            "Maps": [{"MaxZ": 1, "CellDefinitions": {
+                "a": {"Turf": {"Type": 2, "VarOverrides": {"name": "hidden"}}, "Area": {"Type": 4},
+                      "Objects": [{"Type": 6}, {"Type": 6, "VarOverrides": {"extra": 2}}]},
+                "unused": {"Objects": [{"Type": 999}]},
+            }, "Blocks": [{"Cells": ["a", "a"]}]}],
+        }
+
+    def test_weighted_fields_identity_roles_and_unused_default_area(self):
+        data = self.fixture()
+        before = copy.deepcopy(data)
+        report = map_storage_inventory(data)
+        self.assertEqual(report["planned_instances"], 9)
+        self.assertEqual(report["referenced_area_cells"], 2)
+        self.assertEqual(report["planned_unique_area_instances_including_default"], 2)
+        self.assertEqual(report["weighted_instance_field_slots"], 35)
+        self.assertEqual(report["ancestor_closure_types"], 7)
+        self.assertEqual(report["ancestor_closure_effective_field_slots"], 25)
+        self.assertEqual(report["instances_with_nonempty_overrides"], {"turf": 2, "entity": 2})
+        obj = next(entry for entry in report["entries"] if entry["role"] == "entity")
+        self.assertEqual((obj["instances"], obj["effective_fields_including_metadata"], obj["has_inherited_initializer"]), (4, 4, True))
+        self.assertEqual(data, before)
+        self.assertNotIn("hidden", json.dumps(report))
+
+    def test_area_occurrences_are_not_allocations_and_fallbacks(self):
+        data = self.fixture()
+        cell = data["Maps"][0]["CellDefinitions"]["a"]
+        del cell["Area"]
+        del cell["Turf"]
+        report = map_storage_inventory(data)
+        self.assertEqual(report["planned_unique_area_instances_including_default"], 1)
+        self.assertEqual(report["planned_instances"], 8)
+        self.assertEqual(report["instances_with_nonempty_overrides"]["turf"], 0)
+
+    def test_malformed_used_references_and_cycles_fail(self):
+        data = self.fixture()
+        data["Types"][0]["Parent"] = 6
+        with self.assertRaisesRegex(ValueError, "Cyclic"):
+            map_storage_inventory(data)
+        data = self.fixture()
+        data["Maps"][0]["Blocks"][0]["Cells"] = ["missing"]
+        with self.assertRaises(KeyError):
+            map_storage_inventory(data)
+        data = self.fixture()
+        data["Maps"][0]["CellDefinitions"]["a"]["Objects"][0]["Type"] = 999
+        with self.assertRaisesRegex(ValueError, "type reference"):
+            map_storage_inventory(data)
+
+    def test_no_maps_and_metadata_deduplication(self):
+        data = self.fixture()
+        data["Maps"] = []
+        data["Types"][1]["Variables"]["type"] = None
+        report = map_storage_inventory(data)
+        self.assertEqual(report["planned_instances"], 1)
+        self.assertEqual(report["weighted_instance_field_slots"], 5)
+        self.assertEqual(report["planned_unique_area_instances_including_default"], 0)
+        self.assertEqual(map_storage_inventory({})["planned_instances"], 0)
 
 if __name__ == "__main__":
     unittest.main()

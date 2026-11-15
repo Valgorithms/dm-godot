@@ -102,6 +102,7 @@ static Dictionary<string, object?> Measure(CompiledProject project, int side, in
     timer.Start();
     var runtime = new DmRuntime(project);
     timer.Stop();
+    var constructionElapsed = timer.Elapsed.TotalMilliseconds;
     var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
     var gen0Delta = GC.CollectionCount(0) - gen0;
     var gen1Delta = GC.CollectionCount(1) - gen1;
@@ -112,8 +113,38 @@ static Dictionary<string, object?> Measure(CompiledProject project, int side, in
     var retainedAfter = GC.GetTotalMemory(false);
     GC.KeepAlive(runtime);
     GC.KeepAlive(project);
-    // Validate and enumerate after measuring, so observer allocations aren't attributed.
+    // Build the exposure worklist outside both measured intervals. Include every
+    // static identity once, retaining the same worklist through both collections.
     var cells = runtime.MapCells;
+    var objects = cells.SelectMany(c => c.Entities.Append(c.Turf).Append(c.Area))
+        .Append(runtime.World).Distinct().ToArray();
+    FullCollection();
+    var beforeExposure = GC.GetTotalMemory(false);
+    var exposureAllocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+    timer.Restart();
+    foreach (var instance in objects) _ = instance.Variables;
+    timer.Stop();
+    var exposureElapsed = timer.Elapsed.TotalMilliseconds;
+    var exposureAllocated = GC.GetTotalAllocatedBytes(precise: true) - exposureAllocatedBefore;
+    FullCollection();
+    var afterExposure = GC.GetTotalMemory(false);
+    GC.KeepAlive(objects);
+    GC.KeepAlive(runtime);
+    GC.KeepAlive(project);
+    // Validate only after exposure, so public access cannot mask deferred storage.
+    foreach (var instance in objects) {
+        var dictionary = instance.Variables;
+        if (!ReferenceEquals(dictionary, instance.Variables) ||
+            !dictionary.ContainsKey("type") || !dictionary.ContainsKey("parent_type"))
+            throw new InvalidOperationException("Public dictionary identity or metadata changed.");
+    }
+    foreach (var turf in cells.Select(c => c.Turf)) {
+        var expectedKeys = Enumerable.Range(0, fields).Select(i => $"field_{i:D3}")
+            .Concat(new[] { "type", "parent_type" });
+        if (!turf.Variables.Keys.SequenceEqual(expectedKeys) ||
+            Enumerable.Range(0, fields).Any(i => turf.Variables[$"field_{i:D3}"].Number != i))
+            throw new InvalidOperationException("Exposed field values or insertion order changed.");
+    }
     var turfs = cells.Select(c => c.Turf).Distinct().Count();
     var areas = cells.Select(c => c.Area).Distinct().Count();
     var variables = cells.Select(c => c.Turf.Variables.Count).Distinct().ToArray();
@@ -123,7 +154,14 @@ static Dictionary<string, object?> Measure(CompiledProject project, int side, in
         throw new InvalidOperationException("Synthetic runtime topology or inherited-field count differs from the case.");
     using var process = Process.GetCurrentProcess();
     return new() {
-        ["construction_elapsed_ms"] = timer.Elapsed.TotalMilliseconds,
+        ["construction_elapsed_ms"] = constructionElapsed,
+        ["public_exposure_elapsed_ms"] = exposureElapsed,
+        ["public_exposure_process_managed_allocated_bytes"] = exposureAllocated,
+        ["managed_bytes_before_public_exposure_after_forced_gc"] = beforeExposure,
+        ["managed_bytes_after_public_exposure_after_forced_gc"] = afterExposure,
+        ["public_exposure_retained_delta_bytes_after_forced_gc"] = afterExposure - beforeExposure,
+        ["public_exposed_object_count"] = objects.Length,
+        ["public_exposure_values_and_order_verified"] = true,
         ["construction_process_managed_allocated_bytes"] = allocated,
         ["construction_gen0_collections"] = gen0Delta,
         ["construction_gen1_collections"] = gen1Delta,

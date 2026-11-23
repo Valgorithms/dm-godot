@@ -364,3 +364,32 @@ var/storage_seen
 
 /proc/test_storage_read_extra(value)
     storage_seen = value:extra
+
+
+/datum/type_family
+/datum/type_family/zeta
+/datum/type_family/alpha
+/datum/type_family/zeta/deep
+/datum/type_elsewhere
+    parent_type = /datum/type_family/zeta
+
+var/list/types_result
+
+/proc/test_typesof(value)
+    types_result = typesof(value)
+
+/proc/test_typesof_multiple(first, second)
+    types_result = typesof(first, second, first)
+
+/proc/test_typesof_empty()
+    types_result = typesof()
+
+/proc/test_typesof_ignored(value)
+    types_result = typesof(null, 5, 'semantics.dm', value)
+
+/proc/test_typesof_repeat(value, start, limit)
+    for (var/i = start; i < limit; i += 1)
+        types_result = typesof(value)
+
+/proc/test_typesof_subtract(value)
+    types_result = typesof(value) - value

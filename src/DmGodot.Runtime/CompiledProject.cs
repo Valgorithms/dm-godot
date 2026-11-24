@@ -7,6 +7,10 @@ namespace DmGodot.Runtime;
 public sealed class CompiledProject {
     public const string CompilerRevision = "846775a06b8fa4639772cb3e759adcc0133d9711";
     public static string SupportedBytecodeVersion => OpcodeVerifier.GetOpcodesHash();
+    private const int TypeIndexBatchSize = 256;
+    private readonly object _typeIndexGate = new();
+    private TypeChildIndex? _typeIndex;
+    private int _unindexedTypes;
     internal CompiledData Data { get; }
     public string BytecodeVersion => Data.Metadata.Version;
     public int TypeCount => Data.Types.Length;
@@ -38,6 +42,27 @@ public sealed class CompiledProject {
             if (proc.OwningTypeId < 0 || proc.OwningTypeId >= data.Types.Length || proc.MaxVariableId < 0 || proc.MaxVariableId > 65536)
                 throw new CompatibilityException($"Invalid procedure metadata for '{proc.Name}'.");
             ValidateBytecode(proc);
+        }
+        _unindexedTypes = data.Types.Length;
+    }
+
+    // Completed links are immutable and shared by runtimes using this project.
+    // Prepending children in descending ID order puts siblings in ascending ID order.
+    internal TypeChildIndex? AdvanceTypeChildIndex(int typeCount = TypeIndexBatchSize) {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(typeCount);
+        lock (_typeIndexGate) {
+            if (_typeIndex is not null) return _typeIndex;
+            var count = Math.Min(_unindexedTypes, Math.Min(typeCount, TypeIndexBatchSize));
+            for (var i = 0; i < count; i++) {
+                var id = --_unindexedTypes;
+                var child = Data.Types[id];
+                if (child.Parent is not int parentId) continue;
+                var parent = Data.Types[parentId];
+                child.NextSiblingId = parent.FirstChildId;
+                parent.FirstChildId = id;
+            }
+            if (_unindexedTypes != 0) return null;
+            return _typeIndex = new TypeChildIndex(Data.Types);
         }
     }
 
@@ -194,7 +219,15 @@ internal sealed class CompiledData {
     public MapDefinition[]? Maps { get; init; }
 }
 internal sealed class Metadata { public required string Version { get; init; } }
+internal sealed class TypeChildIndex(TypeDefinition[] types) {
+    internal int FirstChild(int id) => types[id].FirstChildId;
+    internal int NextSibling(int id) => types[id].NextSiblingId;
+}
+
 internal sealed class TypeDefinition {
+    // Derived runtime metadata. These internal fields are absent from the JSON contract.
+    internal int FirstChildId = -1;
+    internal int NextSiblingId = -1;
     public required string Path { get; init; }
     public int? Parent { get; init; }
     public int? InitProc { get; init; }

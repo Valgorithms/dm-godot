@@ -1088,13 +1088,12 @@ public sealed class DmRuntime {
         ChargeListAllocation(1);
         var result = new DmList();
         if (roots.Count == 0) return result;
-        // Index only actual Parent edges, preserving ascending serialized child IDs.
-        // Debit before allocating the index. No native work can bypass the budget.
+        // Cold and warm calls pay the same admission charge before using the index.
         Work(Data.Types.Length);
-        var children = new List<int>?[Data.Types.Length];
-        for (var id = 0; id < Data.Types.Length; id++)
-            if (Data.Types[id].Parent is int parent)
-                (children[parent] ??= []).Add(id);
+        TypeChildIndex? children;
+        do {
+            children = Project.AdvanceTypeChildIndex();
+        } while (children is null);
         var pending = new Stack<int>();
         foreach (var root in roots) {
             pending.Push(root);
@@ -1102,9 +1101,11 @@ public sealed class DmRuntime {
                 Work();
                 ChargeListAllocation(1);
                 result.Values.Add(new(new DmTypeReference(id, Data.Types[id].Path)));
-                if (children[id] is { } descendants)
-                    for (var child = descendants.Count - 1; child >= 0; child--)
-                        pending.Push(descendants[child]);
+                // Visit the child first. A root's siblings belong to other subtrees.
+                var sibling = children.NextSibling(id);
+                if (id != root && sibling >= 0) pending.Push(sibling);
+                var child = children.FirstChild(id);
+                if (child >= 0) pending.Push(child);
             }
         }
         return result;

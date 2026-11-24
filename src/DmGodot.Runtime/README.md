@@ -130,10 +130,18 @@ fixture/testing entry point, not a complete BYOND verb dispatch implementation.
 ### Boot ownership
 
 The compatibility probe constructs a fresh runtime inside a disposable
-`DmStartupSession`. Its first `Advance()` runs global initialization and returns
-null. The next runs the mapped startup callbacks, `world.New()` and the existing
-initial queue drain, then returns the completed runtime once. The session
-shares its phase implementations and budget boundaries with synchronous `Boot()`.
+`DmStartupSession`. It calls `AdvanceGlobals(256)` until the method returns true,
+then calls `Advance()` to run mapped callbacks, `world.New()` and the initial
+queue drain and take ownership of the completed runtime. Callers using only
+`Advance()` can still run global initialization in one call and transfer the
+world in the next. Synchronous `Boot()` uses the same interpreter and budgets.
+
+`AdvanceGlobals(n)` accepts a positive dispatch count. A dispatch is one opcode,
+construction stage or implicit frame return. Nested calls and immediate-spawn
+children spend the same allowance. A pause preserves the current instruction,
+call stack, queued work and virtual time. After globals finish, additional calls
+to `AdvanceGlobals(n)` return true until the session closes. The cumulative VM
+work, list-allocation and split-output budgets span all of these calls.
 
 The session accepts the same immutable file inventory and text snapshot as the
 runtime constructor. After an advance, `LogCount` and `PendingThreads` report
@@ -142,9 +150,10 @@ drops a parked world and is checked during map construction, bytecode dispatch,
 startup callbacks and before transfer. Disposal waits for an active advance.
 Use `using` to release an abandoned session. Cancellation after handoff leaves the returned runtime available to its owner.
 
-Each advance runs a whole phase. Sorting a map or executing a native operation
-can delay a cancellation check. The compatibility probe supervisor supplies the
-hard wall-clock timeout.
+A native call runs to completion or fault within its dispatch, including all
+of its existing work charges. Map construction and the final boot phase also
+run synchronously. These operations can delay a cancellation check. The probe
+supervisor enforces a wall-clock timeout on the probe process.
 
 ## Explicit boundaries
 

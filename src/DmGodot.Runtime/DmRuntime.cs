@@ -60,6 +60,7 @@ public sealed class DmRuntime {
         DmValue Type, DmValue ParentType, string? ExecutableInitializerType);
     private long _sequence;
     private bool _booted;
+    private Fiber? _parkedGlobalInitializer;
     private CancellationToken _startupCancellation;
     private int _budget;
     // Bound constructor work as well as bytecode dispatch: one dimension opcode can
@@ -118,23 +119,31 @@ public sealed class DmRuntime {
     }
 
     public void Boot() {
-        InitializeGlobals();
+        AdvanceGlobalInitialization(long.MaxValue);
         FinishBoot();
     }
 
-    internal void InitializeGlobals() {
+    internal bool AdvanceGlobalInitialization(long maxDispatches) {
         _startupCancellation.ThrowIfCancellationRequested();
-        if (_booted) throw new InvalidOperationException("The world has already booted.");
-        _booted = true;
-        _budget = InstructionBudget;
-        _listAllocationRemaining = ListAllocationLimit;
-        _splitTextOutputBytesRemaining = SplitTextOutputByteLimit;
-        if (Data.GlobalInitProc is { } init) {
-            var fiber = new Fiber(new Frame(init, null, []));
-            Execute(fiber);
+        var fiber = _parkedGlobalInitializer;
+        _parkedGlobalInitializer = null;
+        if (fiber is null) {
+            if (_booted) throw new InvalidOperationException("The world has already booted.");
+            _booted = true;
+            _budget = InstructionBudget;
+            _listAllocationRemaining = ListAllocationLimit;
+            _splitTextOutputBytesRemaining = SplitTextOutputByteLimit;
+            if (Data.GlobalInitProc is { } init) fiber = new Fiber(new Frame(init, null, []));
+        }
+        if (fiber is not null) {
+            if (!ExecuteDispatches(fiber, ref maxDispatches)) {
+                _parkedGlobalInitializer = fiber;
+                return false;
+            }
             if (fiber.Frames.Count > 0) throw new CompatibilityException("A yielding global initializer is not supported.");
         }
         _startupCancellation.ThrowIfCancellationRequested();
+        return true;
     }
 
     internal void FinishBoot() {
@@ -643,12 +652,34 @@ public sealed class DmRuntime {
         fiber.Frames.Add(frame);
     }
     private void Execute(Fiber fiber) {
+        long unlimitedDispatches = long.MaxValue;
+        ExecuteDispatches(fiber, ref unlimitedDispatches);
+    }
+
+    // False means the host paused before a dispatch. A DM sleep follows the
+    // ordinary scheduler path and returns true, with its continuation enqueued.
+    private bool ExecuteDispatches(Fiber fiber, ref long remainingDispatches) {
         while (fiber.Frames.Count > 0) {
             _startupCancellation.ThrowIfCancellationRequested();
+            if (remainingDispatches == 0) return false;
             var frame = fiber.Frames[^1];
-            var offset = frame.Reader.Position;
-            if (--_budget < 0) throw Fault(frame, offset, "Instruction budget exhausted; possible non-yielding loop.");
+            var child = fiber.ImmediateChild;
+            var offset = child is null ? frame.Reader.Position : fiber.ImmediateSpawnOffset;
+            if (child is null) {
+                remainingDispatches--;
+                if (--_budget < 0) throw Fault(frame, offset, "Instruction budget exhausted; possible non-yielding loop.");
+            }
             try {
+                if (child is not null) {
+                    // The spawn opcode was already charged. Finish its child before
+                    // the parent dispatches again, retaining the spawn site for faults.
+                    _immediateSpawnDepth++;
+                    try {
+                        if (!ExecuteDispatches(child, ref remainingDispatches)) return false;
+                    } finally { _immediateSpawnDepth--; }
+                    fiber.ImmediateChild = null;
+                    continue;
+                }
                 if (frame.Construction is { } construction) {
                     Procedure? next = construction.Stage++ switch {
                         0 => construction.Initializer,
@@ -699,7 +730,7 @@ public sealed class DmRuntime {
                             frame.Push(DmValue.Null);
                             var delay = args.Length > 0 ? args[0].Number : 0;
                             if (!float.IsFinite(delay)) throw new CompatibilityException("Non-finite sleep delay.");
-                            if (Suspend(fiber, Math.Max(0, delay))) return;
+                            if (Suspend(fiber, Math.Max(0, delay))) return true;
                         } else if (proc.OwningTypeId == 0 && proc.Name == "typesof" && proc.Bytecode is not { Length: > 0 }) {
                             frame.Push(new(TypesOf(args)));
                         } else if (proc.OwningTypeId == 0 && proc.Name == "fexists" && proc.Bytecode is not { Length: > 0 }) {
@@ -781,9 +812,8 @@ public sealed class DmRuntime {
                         frame.Reader.Position = jump;
                         if (delay < 0) {
                             if (_immediateSpawnDepth >= 128) throw new CompatibilityException("Immediate spawn depth limit exceeded.");
-                            _immediateSpawnDepth++;
-                            try { Execute(spawned); }
-                            finally { _immediateSpawnDepth--; }
+                            fiber.ImmediateChild = spawned;
+                            fiber.ImmediateSpawnOffset = offset;
                         } else Enqueue(spawned, Time + delay);
                         break;
                     }
@@ -908,6 +938,7 @@ public sealed class DmRuntime {
             } catch (CompatibilityException ex) { throw Fault(frame, offset, ex.Message, ex); }
             catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentOutOfRangeException or InvalidOperationException or KeyNotFoundException) { throw Fault(frame, offset, $"Malformed or unsupported execution: {ex.Message}", ex); }
         }
+        return true;
     }
 
     private static int ReadEnumeratorId(Frame frame) {
@@ -1421,6 +1452,8 @@ public sealed class DmRuntime {
     private CompatibilityException Fault(Frame frame, int offset, string detail, Exception? inner = null) => new($"{detail} at {Project.Location(frame.Proc, offset)}", inner);
 
     private sealed class Fiber {
+        public Fiber? ImmediateChild;
+        public int ImmediateSpawnOffset;
         public List<Frame> Frames { get; } = [];
         public Fiber() { }
         public Fiber(Frame frame) { Frames.Add(frame); }

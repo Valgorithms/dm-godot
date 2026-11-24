@@ -74,6 +74,22 @@ class ProbeTests(unittest.TestCase):
         self.assertIn("fixture_step", report["message"])
         self.assertEqual((report["log_count"], report["pending_threads"]), (1, 1))
 
+    def test_global_initializer_continues_after_a_probe_batch(self):
+        # 128 PushNull/Pop pairs consume one batch. The following opcode must still execute.
+        prefix = bytes([0x11, 0x51]) * 128
+        for tail, status in [(bytes([0x11, 0x10]), "boot_returned"), (bytes([0x3d]), "blocked")]:
+            with self.subTest(status=status):
+                artifact = self.clone_smoke()
+                artifact["GlobalInitProc"] = {"Name": "probe_global_init", "SourceInfo": [],
+                                              "Bytecode": base64.b64encode(prefix + tail).decode()}
+                report = self.run_artifact(artifact)
+                self.assertEqual((report["runtime_status"], report["phase"]), (status, "boot"))
+                if status == "blocked":
+                    self.assertIn("probe_global_init, byte 256", report["message"])
+                    self.assertEqual((report["log_count"], report["pending_threads"]), (0, 0))
+                else:
+                    self.assertGreater(report["pending_threads"], 0)
+
     def test_instruction_budget_bounds_boot(self):
         artifact = self.clone_smoke()
         self.world_new(artifact)["Bytecode"] = base64.b64encode(bytes([0x0e, 0, 0, 0, 0])).decode()

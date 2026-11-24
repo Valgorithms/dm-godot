@@ -572,3 +572,35 @@ var/split_result
         world << "startup later"
     if(file2text("startup.txt") == "ok")
         init_count = 2
+
+/proc/test_dispatch_globals()
+    var/result = dispatch_sum(2, 0)
+    spawn(-1)
+        world << "outer"
+        spawn(-1)
+            world << "inner"
+            sleep(1)
+            world << "resumed"
+        world << "outer-end"
+    spawn(0)
+        world << "due"
+    init_count = result
+    world << "global=[result]"
+
+/proc/test_dispatch_world()
+    world << "world-started"
+
+/proc/dispatch_sum(seed, start)
+    var/datum/init_marker/marker = new
+    for(var/i = start; i < 2; i += 1)
+        seed += count_initializer()
+    return seed + marker.value
+
+/proc/test_dispatch_nested_fault()
+    spawn(-1)
+        spawn(-1)
+            test_world_tick_usage()
+
+/proc/test_dispatch_spin()
+    while(TRUE)
+        init_count += 1

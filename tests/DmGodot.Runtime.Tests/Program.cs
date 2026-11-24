@@ -136,20 +136,21 @@ T StartupError<T>(Action action) where T : Exception {
     throw new Exception($"Expected startup to throw {typeof(T).Name}.");
 }
 
-CompiledProject StartupProject(string artifact, bool loopInWorldNew = false) {
+CompiledProject StartupProject(string artifact, bool loopInWorldNew = false, string globalInitializer = "test_startup_global_init",
+    string worldInitializer = "test_arithmetic") {
     var json = JsonNode.Parse(File.ReadAllText(artifact))!;
     var procs = json["Procs"]!.AsArray();
     JsonNode Fixture(string name) => procs.Single(p => p!["Name"]!.GetValue<string>() == name)!;
     // Use the compiler-emitted fixture bodies without running this setup for unrelated DM tests.
-    json["GlobalInitProc"] = Fixture("test_startup_global_init").DeepClone();
+    json["GlobalInitProc"] = Fixture(globalInitializer).DeepClone();
     int world = TypeId(json, "/world");
     var chain = json["Types"]![world]!["Procs"]!.AsArray().Single(c => procs[c![0]!.GetValue<int>()]!["Name"]!.GetValue<string>() == "New");
     var worldNew = procs[chain!.AsArray()[^1]!.GetValue<int>()]!;
-    var arithmetic = Fixture("test_arithmetic");
+    var body = Fixture(worldInitializer);
     worldNew["Bytecode"] = loopInWorldNew
         ? Convert.ToBase64String([(byte)DreamProcOpcode.Jump, 0, 0, 0, 0])
-        : arithmetic["Bytecode"]!.GetValue<string>();
-    worldNew["SourceInfo"] = loopInWorldNew ? new JsonArray() : arithmetic["SourceInfo"]!.DeepClone();
+        : body["Bytecode"]!.GetValue<string>();
+    worldNew["SourceInfo"] = loopInWorldNew ? new JsonArray() : body["SourceInfo"]!.DeepClone();
     return CompiledProject.Parse(json.ToJsonString());
 }
 
@@ -269,6 +270,120 @@ tests.Add(("cancelling a parked session releases its candidate without another h
         Check(session.LogCount == 1 && session.PendingThreads == 2, "Discarding the candidate lost its diagnostics.");
         GC.KeepAlive(session);
     }
+}));
+
+foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
+    tests.Add(($"global dispatch slices retain call and immediate-spawn state: {artifact}", () => {
+        const string initializer = "test_dispatch_globals";
+        var project = StartupProject(artifact, globalInitializer: initializer, worldInitializer: "test_dispatch_world");
+        var direct = new DmRuntime(project); direct.Boot();
+        int oneAtATime = 0;
+        foreach (var quota in new[] { 1, 7, int.MaxValue }) {
+            using var session = new DmStartupSession(project);
+            int calls = 0;
+            bool complete;
+            do {
+                var priorLogs = session.LogCount;
+                complete = session.AdvanceGlobals(quota);
+                Check(session.LogCount - priorLogs <= quota && ++calls < 512, "Step exceeded its allowance or stopped making progress.");
+            } while (!complete);
+            if (quota == 1) oneAtATime = calls;
+            else Check(calls == (oneAtATime - 1) / quota + 1, "Dispatch count depends on the host's slice size.");
+            Check(session.LogCount == 4 && session.PendingThreads == 2, "DM yield or queued work was mistaken for a host pause.");
+            Check(session.AdvanceGlobals(1) && session.LogCount == 4 && session.PendingThreads == 2,
+                "Polling global completion executed new work.");
+            var result = session.Advance() ?? throw new Exception("Completed globals did not permit transfer.");
+            Check(result.GetGlobal("init_count").Number == 8 && result.Logs.Count == 6 && result.PendingThreads == 1,
+                "Locals, nested return values, constructors or spawn order changed.");
+            Check(result.Logs.Select(l => l.Text).SequenceEqual(new[] { "outer", "inner", "outer-end", "global=8", "world-started", "due" }),
+                "Immediate and deferred callbacks ran out of order.");
+            result.AdvanceBy(1);
+            Check(result.Logs[^1] == new RuntimeLog(1, "resumed") && result.PendingThreads == 0, "Sleeping immediate-spawn child did not resume once.");
+            if (quota == 1) direct.AdvanceBy(1);
+            Check(result.Logs.SequenceEqual(direct.Logs) && result.GetGlobal("init_count") == direct.GetGlobal("init_count"),
+                "Stepped outcome differs from direct Boot.");
+            StartupError<InvalidOperationException>(() => session.AdvanceGlobals(1));
+        }
+
+        // This fixture has no native work charges. The reference budget moves from the final
+        // global dispatch to the first world.New dispatch at exactly the measured single-step count.
+        var shortByOne = new DmRuntime(project) { InstructionBudget = oneAtATime - 1 };
+        var exact = new DmRuntime(project) { InstructionBudget = oneAtATime };
+        var lastGlobal = StartupError<CompatibilityException>(shortByOne.Boot).Message;
+        var firstWorld = StartupError<CompatibilityException>(exact.Boot).Message;
+        Check(lastGlobal.Contains("Instruction budget exhausted") && lastGlobal.Contains($"(//{initializer}, byte ") &&
+            firstWorld.Contains("Instruction budget exhausted") && firstWorld.Contains("(/world/New, byte 0)"),
+            "The host's dispatch quota differs from the original executor debit.");
+    }));
+}
+
+tests.Add(("global steps compose with Advance and invalid sizes preserve progress", () => {
+    var project = StartupProject(semanticsPath, globalInitializer: "test_dispatch_globals", worldInitializer: "test_dispatch_world");
+    using var session = new DmStartupSession(project);
+    StartupError<ArgumentOutOfRangeException>(() => session.AdvanceGlobals(0));
+    Check(!session.AdvanceGlobals(1), "One dispatch finished an entire global initializer.");
+    StartupError<ArgumentOutOfRangeException>(() => session.AdvanceGlobals(-1));
+    Check(session.Advance() is null && session.LogCount == 4 && session.PendingThreads == 2, "Advance failed to drain partial globals.");
+    Check(session.AdvanceGlobals(1), "Finished globals restarted under stepped execution.");
+    var result = session.Advance() ?? throw new Exception("Second phase did not transfer the runtime.");
+    Check(result.GetGlobal("init_count").Number == 8 && result.Logs.Count == 6, "Mixed entry points repeated or skipped work.");
+}));
+
+tests.Add(("partial global initialization can be cancelled or disposed between dispatches", () => {
+    var project = StartupProject(semanticsPath, globalInitializer: "test_dispatch_globals", worldInitializer: "test_dispatch_world");
+    foreach (var dispose in new[] { false, true }) {
+        using var token = new CancellationTokenSource();
+        using var session = new DmStartupSession(project, cancellationToken: token.Token);
+        for (int i = 0; i < 3; i++) Check(!session.AdvanceGlobals(1), "Expected a partially executed initializer.");
+        int logs = session.LogCount, pending = session.PendingThreads;
+        if (dispose) session.Dispose();
+        else {
+            token.Cancel();
+            StartupError<OperationCanceledException>(() => session.AdvanceGlobals(1));
+        }
+        StartupError<InvalidOperationException>(() => session.Advance());
+        Check(session.LogCount == logs && session.PendingThreads == pending, "Terminated partial globals executed more work.");
+    }
+}));
+
+tests.Add(("global stepping preserves immediate-spawn faults and rejects a yielding global root", () => {
+    foreach (var (proc, diagnostic) in new[] {
+        ("test_dispatch_nested_fault", "world.tick_usage is not implemented"), ("test_zero_delay", "yielding global initializer")
+    }) {
+        var project = StartupProject(semanticsPath, globalInitializer: proc);
+        var direct = new DmRuntime(project);
+        var reference = StartupError<CompatibilityException>(direct.Boot);
+        using var session = new DmStartupSession(project);
+        var fault = StartupError<CompatibilityException>(() => {
+            for (var i = 0; i < 256; i++) {
+                if (session.AdvanceGlobals(1)) throw new Exception("Faulting initializer completed.");
+            }
+            throw new Exception("Faulting initializer stalled.");
+        });
+        Check(reference.Message.Contains(diagnostic, StringComparison.OrdinalIgnoreCase) && fault.Message == reference.Message &&
+            session.LogCount == direct.Logs.Count && session.PendingThreads == direct.PendingThreads, "Global fault location or effects changed.");
+        if (proc == "test_dispatch_nested_fault") {
+            Check(fault.Message.Contains("(//test_world_tick_usage, byte ") &&
+                fault.Message.Split("(//test_dispatch_nested_fault, byte ").Length == 3,
+                "The original source site and both immediate-spawn call sites must be retained.");
+        } else {
+            Check(session.LogCount == 1 && session.PendingThreads == 2,
+                "Root yield must fault after the prefix, before draining spawn(0) or sleep(0).");
+        }
+        StartupError<InvalidOperationException>(() => session.Advance());
+    }
+}));
+
+tests.Add(("stepping a non-yielding initializer retains the single 100000-dispatch limit", () => {
+    var project = StartupProject(semanticsPath, globalInitializer: "test_dispatch_spin");
+    var direct = new DmRuntime(project);
+    var reference = StartupError<CompatibilityException>(direct.Boot);
+    using var session = new DmStartupSession(project);
+    for (var i = 0; i < 1000; i++) Check(!session.AdvanceGlobals(100), "Infinite initializer completed.");
+    var fault = StartupError<CompatibilityException>(() => session.AdvanceGlobals(1));
+    Check(fault.Message.Contains("Instruction budget exhausted") && fault.Message == reference.Message,
+        "Repeated positive slices reset the original hard budget or changed its fault location.");
+    StartupError<InvalidOperationException>(() => session.AdvanceGlobals(100));
 }));
 
 void Semantics(string name, string proc, string[] immediate, string[] afterOne, bool optimized = false) {

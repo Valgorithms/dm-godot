@@ -5,6 +5,7 @@ using DmGodot.Runtime;
 
 // A bounded compatibility measurement. This executable has no Host reference,
 // network listener, world ticking loop, native service adapter or save access.
+const int globalDispatchBatchSize = 256;
 var phase = "artifact_load";
 var status = "unexpected_error";
 string? artifactHash = null;
@@ -150,9 +151,10 @@ try {
     using var session = new DmStartupSession(project, inventory, textFiles);
     phase = "boot";
     try {
-        while (session.Advance() is null) {
-            // Continue to the next startup phase without advancing virtual time.
+        while (!session.AdvanceGlobals(globalDispatchBatchSize)) {
+            // Resume the same global initializer without advancing virtual time.
         }
+        _ = session.Advance() ?? throw new InvalidOperationException("Startup session did not complete after global initialization.");
         status = "boot_returned";
         exitCode = 0;
     } finally {

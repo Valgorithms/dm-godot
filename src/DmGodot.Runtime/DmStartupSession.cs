@@ -29,34 +29,46 @@ public sealed class DmStartupSession : IDisposable {
         }
     }
 
-    /// <summary>The first call runs the global initializer. The second transfers the
-    /// completed runtime. A fault or cancellation closes the session.</summary>
-    public DmRuntime? Advance() {
+    /// <summary>Run up to maxDispatches charged interpreter dispatches during global initialization.
+    /// True means globals are complete. Native operations run atomically under the
+    /// cumulative work budget. This method never runs the remaining boot phases.</summary>
+    public bool AdvanceGlobals(int maxDispatches) {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDispatches);
         lock (_gate) {
-            var runtime = Interlocked.Exchange(ref _candidate, null);
-            try {
+            AdvanceCore(maxDispatches, globalsOnly: true);
+            return _initializedGlobals;
+        }
+    }
+
+    /// <summary>Complete any remaining global initialization, or transfer the
+    /// fully booted runtime if globals were already complete on entry.</summary>
+    public DmRuntime? Advance() {
+        lock (_gate) return AdvanceCore(long.MaxValue, globalsOnly: false);
+    }
+
+    private DmRuntime? AdvanceCore(long maxDispatches, bool globalsOnly) {
+        var runtime = Interlocked.Exchange(ref _candidate, null);
+        try {
+            _cancellation.ThrowIfCancellationRequested();
+            if (runtime is null) throw new InvalidOperationException("The startup session has closed.");
+            if (globalsOnly || !_initializedGlobals) {
+                if (!_initializedGlobals) _initializedGlobals = runtime.AdvanceGlobalInitialization(maxDispatches);
+                Interlocked.Exchange(ref _candidate, runtime);
+                // If cancellation ran while the runtime was local, undo this park.
                 _cancellation.ThrowIfCancellationRequested();
-                if (runtime is null) throw new InvalidOperationException("The startup session has closed.");
-                if (!_initializedGlobals) {
-                    runtime.InitializeGlobals();
-                    _initializedGlobals = true;
-                    Interlocked.Exchange(ref _candidate, runtime);
-                    // If cancellation ran while the runtime was local, undo this park.
-                    _cancellation.ThrowIfCancellationRequested();
-                    return null;
-                }
-                runtime.FinishBoot();
-                _cancellation.ThrowIfCancellationRequested();
-                Close();
-                return runtime;
-            } catch {
-                Close();
-                throw;
-            } finally {
-                if (runtime is not null) {
-                    LogCount = runtime.Logs.Count;
-                    PendingThreads = runtime.PendingThreads;
-                }
+                return null;
+            }
+            runtime.FinishBoot();
+            _cancellation.ThrowIfCancellationRequested();
+            Close();
+            return runtime;
+        } catch {
+            Close();
+            throw;
+        } finally {
+            if (runtime is not null) {
+                LogCount = runtime.Logs.Count;
+                PendingThreads = runtime.PendingThreads;
             }
         }
     }

@@ -47,6 +47,8 @@ class ProbeTests(unittest.TestCase):
         report = self.run_artifact(artifact)
         self.assertEqual((report["runtime_status"], report["phase"]), ("blocked", "runtime_construct"))
         self.assertIn("value kind 2", report["message"])
+        self.assertIsNone(report["log_count"])
+        self.assertIsNone(report["pending_threads"])
 
     def world_new(self, artifact):
         world = next(i for i, item in enumerate(artifact["Types"]) if item["Path"] == "/world")
@@ -60,6 +62,17 @@ class ProbeTests(unittest.TestCase):
         report = self.run_artifact(artifact)
         self.assertEqual((report["runtime_status"], report["phase"]), ("blocked", "boot"))
         self.assertIn("world.dm:", report["message"])
+
+    def test_boot_fault_preserves_partial_counts(self):
+        artifact = self.clone_smoke()
+        # world.New logs "boot" and queues a spawn before calling fixture_step.
+        step = next(artifact["Procs"][i] for i in artifact["GlobalProcs"]
+                    if artifact["Procs"][i]["Name"] == "fixture_step")
+        step["Bytecode"] = base64.b64encode(bytes([0x3d])).decode()
+        report = self.run_artifact(artifact)
+        self.assertEqual((report["runtime_status"], report["phase"]), ("blocked", "boot"))
+        self.assertIn("fixture_step", report["message"])
+        self.assertEqual((report["log_count"], report["pending_threads"]), (1, 1))
 
     def test_instruction_budget_bounds_boot(self):
         artifact = self.clone_smoke()

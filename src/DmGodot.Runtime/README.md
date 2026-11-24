@@ -127,6 +127,25 @@ Use `CompiledProject.Load(path)`, `new DmRuntime(project)`, `Boot()`, and
 record snapshots through read-only list interfaces. `InvokeGlobal()` is a
 fixture/testing entry point, not a complete BYOND verb dispatch implementation.
 
+### Boot ownership
+
+The compatibility probe constructs a fresh runtime inside a disposable
+`DmStartupSession`. Its first `Advance()` runs global initialization and returns
+null. The next runs the mapped startup callbacks, `world.New()` and the existing
+initial queue drain, then returns the completed runtime once. The session
+shares its phase implementations and budget boundaries with synchronous `Boot()`.
+
+The session accepts the same immutable file inventory and text snapshot as the
+runtime constructor. After an advance, `LogCount` and `PendingThreads` report
+scalar counts, including on failure. A fault closes the session. Cancellation
+drops a parked world and is checked during map construction, bytecode dispatch,
+startup callbacks and before transfer. Disposal waits for an active advance.
+Use `using` to release an abandoned session. Cancellation after handoff leaves the returned runtime available to its owner.
+
+Each advance runs a whole phase. Sorting a map or executing a native operation
+can delay a cancellation check. The compatibility probe supervisor supplies the
+hard wall-clock timeout.
+
 ## Explicit boundaries
 
 This is **not a complete BYOND world runtime**. Static map objects now retain identity;

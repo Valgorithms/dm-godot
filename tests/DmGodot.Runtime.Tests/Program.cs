@@ -2224,6 +2224,33 @@ tests.Add(("text normalization handles valid Unicode and measured byte boundarie
         new byte[] { 120, 0xe9, 0xe8, 121 }
     }) Throws(() => new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]> { ["value"] = bytes }), "encoding is not supported");
 }));
+tests.Add(("file2text decodes isolated Latin-1 bytes at LF-terminated word endings", () => {
+    var inventory = new DmFileInventory(["value"]);
+    string Decode(byte[] bytes) => new DmTextFileSnapshot(inventory,
+        new Dictionary<string, byte[]> { ["value"] = bytes }).ReadText("value")!;
+    Check(Decode([(byte)'o', 0xeb, 10]) == "oë\n", "Line-final ë differs from BYOND.");
+    Check(Decode([0x6f, 0xc3, 0xab, 10]) == "oë\n", "Valid UTF-8 must use the strict UTF-8 path.");
+    Check(Decode([0x6f, 0xeb, 10, 0, 0xff, 0xff]) == "oë\n", "Data following NUL affected decoding.");
+
+    // DreamDaemon 516.1688 file2text length and MD5 for these 6,604 lines.
+    var endings = new List<byte>();
+    foreach (var letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+        for (var high = 0x80; high < 0xff; high++)
+            endings.AddRange([(byte)letter, (byte)high, (byte)'\n']);
+    var decoded = System.Text.Encoding.UTF8.GetBytes(Decode(endings.ToArray()));
+    Check(decoded.Length == 26416 && Convert.ToHexString(System.Security.Cryptography.MD5.HashData(decoded))
+        .Equals("6fbb80cffec8513a187b207c52cfa554", StringComparison.OrdinalIgnoreCase),
+        "Line-ending text differs from the native length or digest.");
+    foreach (var bytes in new byte[][] {
+        [65, 0xff, 10], [0xeb, 10], [10, 0xeb, 10], [32, 0xeb, 10], [65, 0xeb], [65, 0xeb, 13, 10],
+        [65, 0xeb, 0xff, 10], [0xef, 0xbb, 0xbf, 65, 0xeb, 10], [0xc3, 0xab, 10, 65, 0xeb, 10]
+    }) Throws(() => Decode(bytes), "encoding is not supported");
+    var limit = DmTextFileSnapshot.MaximumFileBytes;
+    var atLimit = Enumerable.Repeat((byte)'a', limit).ToArray();
+    atLimit[^2] = 0xeb; atLimit[^1] = 10;
+    Check(Decode(atLimit).Length == limit, "Exact per-file boundary rejected.");
+    Throws(() => Decode([.. atLimit, 10]), "per-file");
+}));
 tests.Add(("text snapshot ingress limits cover raw, decoded and entry bounds", () => {
     var directoryInventory = new DmFileInventory(["dir/child"]);
     foreach (var name in new[] { "dir", "" })

@@ -37,8 +37,12 @@ class ProbeTests(unittest.TestCase):
     def test_constructor_failure_is_distinct(self):
         artifact = self.clone_smoke()
         # A valid pinned-format proc reference is not yet a supported runtime value.
-        artifact["Globals"] = {"GlobalCount": 1, "Names": ["probe_proc"],
-                               "Globals": {"0": {"type": 2, "value": 0}}}
+        # Preserve existing type-to-global mappings while adding the unsupported value.
+        globals_data = artifact["Globals"]
+        index = globals_data["GlobalCount"]
+        globals_data["GlobalCount"] += 1
+        globals_data["Names"].append("probe_proc")
+        globals_data["Globals"][str(index)] = {"type": 2, "value": 0}
         report = self.run_artifact(artifact)
         self.assertEqual((report["runtime_status"], report["phase"]), ("blocked", "runtime_construct"))
         self.assertIn("value kind 2", report["message"])

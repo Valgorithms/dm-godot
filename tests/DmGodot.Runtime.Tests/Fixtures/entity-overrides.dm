@@ -60,3 +60,8 @@ world
 /proc/read_turf_state()
     var/turf/t = locate(1,1,1)
     world << t.icon_state
+
+
+var/entity_initial_result
+/proc/test_entity_initial(value)
+    entity_initial_result = initial(value:scalar)

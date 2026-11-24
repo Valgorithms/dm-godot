@@ -65,6 +65,8 @@ public sealed class DmRuntime {
     // otherwise allocate an unbounded graph. Reset only at public execution boundaries.
     private const int ListAllocationLimit = 100_000;
     private int _listAllocationRemaining = ListAllocationLimit;
+    private const int SplitTextOutputByteLimit = 1024 * 1024;
+    private int _splitTextOutputBytesRemaining = SplitTextOutputByteLimit;
     private int _immediateSpawnDepth;
     // Built-ins from the pinned OpenDream World.dm. User-defined vars remain ordinary fields.
     private static readonly HashSet<string> BuiltinWorldFields = new(StringComparer.Ordinal) {
@@ -110,6 +112,7 @@ public sealed class DmRuntime {
         _booted = true;
         _budget = InstructionBudget;
         _listAllocationRemaining = ListAllocationLimit;
+        _splitTextOutputBytesRemaining = SplitTextOutputByteLimit;
         if (Data.GlobalInitProc is { } init) {
             var fiber = new Fiber(new Frame(init, null, []));
             Execute(fiber);
@@ -150,6 +153,7 @@ public sealed class DmRuntime {
         if (!double.IsFinite(target)) throw new ArgumentOutOfRangeException(nameof(deciseconds));
         _budget = InstructionBudget;
         _listAllocationRemaining = ListAllocationLimit;
+        _splitTextOutputBytesRemaining = SplitTextOutputByteLimit;
         DrainUntil(target);
     }
 
@@ -472,6 +476,79 @@ public sealed class DmRuntime {
         }
     }
 
+    private DmList SplitText(DmValue[] args) {
+        if (args.Length is < 2 or > 5)
+            throw new CompatibilityException("splittext requires two to five arguments.");
+        DmList Empty() { ChargeListAllocation(1); return new DmList(); }
+        if (args[0].Value is not string text || text.Length == 0) return Empty();
+        var fullStart = args.Length < 3 || args[2].IsNull || args[2].Value is float startValue && startValue == 1f;
+        var fullEnd = args.Length < 4 || args[3].IsNull || args[3].Value is float endValue && endValue == 0f;
+        if (!fullStart || !fullEnd)
+            throw new CompatibilityException("splittext indexed search bounds are not implemented.");
+        var include = false;
+        if (args.Length > 4 && !args[4].IsNull) {
+            if (args[4].Value is not float flag || (flag != 0f && flag != 1f))
+                throw new CompatibilityException("splittext include_delimiters supports only zero or one.");
+            include = flag == 1f;
+        }
+        if (args.Length < 2 || args[1].Value is not string delimiter)
+            throw new CompatibilityException("splittext non-string delimiter forms are not implemented.");
+        void Work(int amount) {
+            if (amount < 0 || amount > _budget)
+                throw new CompatibilityException("splittext work budget exhausted.");
+            _budget -= amount;
+        }
+        void ValidateText(string value) {
+            Work(value.Length);
+            for (var i = 0; i < value.Length; i++) {
+                if (!char.IsSurrogate(value[i])) continue;
+                if (!char.IsHighSurrogate(value[i]) || i + 1 >= value.Length || !char.IsLowSurrogate(value[++i]))
+                    throw new CompatibilityException("splittext malformed UTF-16 input is not implemented.");
+            }
+        }
+        ValidateText(text); ValidateText(delimiter);
+        if (delimiter.Length == 0) {
+            Work(text.Length);
+            foreach (var character in text)
+                if (character > 127) throw new CompatibilityException("splittext empty delimiter supports ASCII input only.");
+        }
+        ChargeListAllocation(1);
+        var result = new DmList();
+        void Emit(string source, int offset, int length) {
+            Work(length);
+            var bytes = 2L * length;
+            if (bytes > _splitTextOutputBytesRemaining)
+                throw new CompatibilityException("splittext output allocation budget exhausted.");
+            ChargeListAllocation(1);
+            _splitTextOutputBytesRemaining -= (int)bytes;
+            result.Values.Add(new DmValue(source.Substring(offset, length)));
+        }
+        if (delimiter.Length == 0) {
+            for (var i = 0; i < text.Length; i++) {
+                if (include && i != 0) Emit(delimiter, 0, 0);
+                Emit(text, i, 1);
+            }
+            return result;
+        }
+        var start = 0; var position = 0;
+        while (position <= text.Length - delimiter.Length) {
+            var matched = 0;
+            while (matched < delimiter.Length) {
+                Work(1);
+                if (text[position + matched] != delimiter[matched]) break;
+                matched++;
+            }
+            if (matched == delimiter.Length) {
+                Emit(text, start, position - start);
+                if (include) Emit(delimiter, 0, delimiter.Length);
+                position += delimiter.Length;
+                start = position;
+            } else position++;
+        }
+        Emit(text, start, text.Length - start);
+        return result;
+    }
+
     private DmValue FileText(DmValue value) {
         if (value.Value is DmResource)
             throw new CompatibilityException("file2text embedded resource bytes are not represented by the text capability.");
@@ -598,6 +675,8 @@ public sealed class DmRuntime {
                             frame.Push(FileExists(args.Length == 0 ? DmValue.Null : args[0]));
                         } else if (proc.OwningTypeId == 0 && proc.Name == "file2text" && proc.Bytecode is not { Length: > 0 }) {
                             frame.Push(FileText(args.Length == 0 ? DmValue.Null : args[0]));
+                        } else if (proc.OwningTypeId == 0 && proc.Name == "splittext" && proc.Bytecode is not { Length: > 0 }) {
+                            frame.Push(new DmValue(SplitText(args)));
                         } else {
                             if (proc.Bytecode is not { Length: > 0 } && !CanExecuteEmpty(proc))
                                 throw new CompatibilityException($"Native proc '{proc.Name}' is not implemented.");

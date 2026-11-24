@@ -2243,6 +2243,125 @@ tests.Add(("text snapshot ingress limits cover raw, decoded and entry bounds", (
     Throws(() => new DmTextFileSnapshot(inventory, names.Take(17).Select(name => new KeyValuePair<string, byte[]>(name, compact))), "raw byte");
 }));
 
+foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
+    tests.Add(($"splittext measured literal delimiters preserve fields and fresh list identity: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        foreach (var (text, delimiter, expected) in new (string, string, string[])[] {
+            ("a,,b,", ",", ["a", "", "b", ""]), (",a", ",", ["", "a"]), (",", ",", ["", ""]),
+            ("ab--cd----", "--", ["ab", "cd", "", ""]), ("aaa", "aa", ["", "a"]),
+            ("aAa", "A", ["a", "a"]), ("aaa", "A", ["aaa"]),
+            ("é,😀,e\u0301", ",", ["é", "😀", "e\u0301"]), ("left😀right😀", "😀", ["left", "right", ""]),
+            ("short", "long delimiter", ["short"])
+        }) {
+            runtime.InvokeGlobal("test_split_default", new DmValue(text), new DmValue(delimiter));
+            var first = (DmList)runtime.GetGlobal("split_result").Value!;
+            Check(first.Associations.Count == 0 && first.Values.Select(v => v.Value as string).SequenceEqual(expected), "Literal split fields changed.");
+            runtime.InvokeGlobal("test_split_default", new DmValue(text), new DmValue(delimiter));
+            Check(!ReferenceEquals(first, runtime.GetGlobal("split_result").Value), "Split reused mutable list identity.");
+        }
+        runtime.InvokeGlobal("test_split_arguments", new DmValue("a,,b,"), new DmValue(","), new DmValue(1f), new DmValue(0f), new DmValue(1f));
+        Check(((DmList)runtime.GetGlobal("split_result").Value!).Values.Select(v => v.Value as string).SequenceEqual(new[] { "a", ",", "", ",", "b", ",", "" }), "Included delimiters lost empty fields.");
+        runtime.InvokeGlobal("test_split_arguments", new DmValue("a,b"), new DmValue(","), DmValue.Null, DmValue.Null, DmValue.Null);
+        Check(((DmList)runtime.GetGlobal("split_result").Value!).Values.Select(v => v.Value as string).SequenceEqual(new[] { "a", "b" }), "Null bounds did not use full-range defaults.");
+    }));
+    tests.Add(($"splittext empty and invalid text precede unsupported argument guards: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        foreach (var text in new[] { new DmValue(""), DmValue.Null, new DmValue(1f), new DmValue(new DmList()), new DmValue(new DmAssocList()), new DmValue(runtime.World), new DmValue(new DmResource("resource")), new DmValue(new DmTypeReference(0, "/")) }) {
+            runtime.InvokeGlobal("test_split_arguments", text, new DmValue(""), new DmValue(-10f), new DmValue(-20f), new DmValue(float.NaN));
+            var first = (DmList)runtime.GetGlobal("split_result").Value!;
+            Check(first.Values.Count == 0 && first.Associations.Count == 0, "Empty/nontext source did not yield an empty list.");
+            runtime.InvokeGlobal("test_split_default", text, DmValue.Null);
+            Check(!ReferenceEquals(first, runtime.GetGlobal("split_result").Value), "Empty result reused mutable list identity.");
+        }
+    }));
+    tests.Add(($"splittext ASCII empty delimiter matches native entry boundaries: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        foreach (var (text, flag, expected) in new (string, float, string[])[] {
+            ("", 1, []), ("a", 0, ["a"]), ("a", 1, ["a"]), ("abc", 0, ["a", "b", "c"]), ("abc", 1, ["a", "", "b", "", "c"])
+        }) {
+            runtime.InvokeGlobal("test_split_arguments", new DmValue(text), new DmValue(""), new DmValue(1f), new DmValue(0f), new DmValue(flag));
+            Check(((DmList)runtime.GetGlobal("split_result").Value!).Values.Select(v => v.Value as string).SequenceEqual(expected), "ASCII byte split boundary changed.");
+        }
+        Throws(() => runtime.InvokeGlobal("test_split_default", new DmValue("é😀"), new DmValue("")), "ASCII input only");
+    }));
+    tests.Add(($"splittext unsupported forms fail without replacing prior results: {artifact}", () => {
+        var project = CompiledProject.Load(artifact); var runtime = new DmRuntime(project); runtime.Boot();
+        runtime.InvokeGlobal("test_split_default", new DmValue("seed"), new DmValue(",")); var prior = runtime.GetGlobal("split_result").Value;
+        foreach (var delimiter in new[] { DmValue.Null, new DmValue(1f), new DmValue(new DmList()), new DmValue(new DmAssocList()), new DmValue(runtime.World), new DmValue(new DmResource("file")) })
+            Throws(() => runtime.InvokeGlobal("test_split_default", new DmValue("abc"), delimiter), "non-string delimiter");
+        foreach (var start in new[] { -1f, 0f, 1.5f, 2f, float.NaN, float.PositiveInfinity })
+            Throws(() => runtime.InvokeGlobal("test_split_arguments", new DmValue("é,a,b"), new DmValue(","), new DmValue(start), new DmValue(0f), new DmValue(0f)), "indexed search bounds");
+        foreach (var end in new[] { -1f, 1f, 2f, 0.5f, float.NaN, float.NegativeInfinity })
+            Throws(() => runtime.InvokeGlobal("test_split_arguments", new DmValue("é,a,b"), new DmValue(","), new DmValue(1f), new DmValue(end), new DmValue(0f)), "indexed search bounds");
+        foreach (var flag in new[] { new DmValue(-1f), new DmValue(0.5f), new DmValue(2f), new DmValue(float.NaN), new DmValue(float.PositiveInfinity), new DmValue("1") })
+            Throws(() => runtime.InvokeGlobal("test_split_arguments", new DmValue("a,b"), new DmValue(","), new DmValue(1f), new DmValue(0f), flag), "include_delimiters supports only");
+        foreach (var malformed in new[] { new string((char)0xd800, 1), new string((char)0xdc00, 1), new string(new[] { (char)0xd800, 'x' }) }) {
+            Throws(() => runtime.InvokeGlobal("test_split_default", new DmValue(malformed), new DmValue(",")), "malformed UTF-16");
+            Throws(() => runtime.InvokeGlobal("test_split_default", new DmValue("abc"), new DmValue(malformed)), "malformed UTF-16");
+        }
+        Check(ReferenceEquals(prior, runtime.GetGlobal("split_result").Value), "Unsupported split published a partial result.");
+    }));
+    tests.Add(($"splittext work and allocation limits remain distinct and atomic: {artifact}", () => {
+        var project = CompiledProject.Load(artifact);
+        var limited = new DmRuntime(project) { InstructionBudget = 2000 }; limited.Boot();
+        limited.InvokeGlobal("test_split_default", new DmValue("seed"), new DmValue(",")); var prior = limited.GetGlobal("split_result").Value;
+        Throws(() => limited.InvokeGlobal("test_split_default", new DmValue(new string('a', 128)), new DmValue(new string('a', 64) + "b")), "splittext work budget");
+        Check(ReferenceEquals(prior, limited.GetGlobal("split_result").Value), "Work failure published partial split.");
+        var normal = new DmRuntime(project); normal.Boot();
+        normal.InvokeGlobal("test_split_default", new DmValue(new string('a', 128)), new DmValue(new string('a', 64) + "b"));
+        Check(((DmList)normal.GetGlobal("split_result").Value!).Values.Count == 1, "Adequate-budget no-match control failed.");
+        var allocations = new DmRuntime(project) { InstructionBudget = 5_000_000 }; allocations.Boot();
+        allocations.InvokeGlobal("test_split_default", new DmValue("seed"), new DmValue(",")); prior = allocations.GetGlobal("split_result").Value;
+        Throws(() => allocations.InvokeGlobal("test_split_default", new DmValue(new string(',', 100_000)), new DmValue(",")), "list allocation budget");
+        Check(ReferenceEquals(prior, allocations.GetGlobal("split_result").Value), "List allocation failure replaced prior output.");
+        Throws(() => allocations.InvokeGlobal("test_split_default", new DmValue(new string('x', 524_289)), new DmValue(",")), "splittext output allocation budget");
+        Check(ReferenceEquals(prior, allocations.GetGlobal("split_result").Value), "Output byte failure replaced prior output.");
+        Throws(() => allocations.InvokeGlobal("test_split_twice", new DmValue(new string('x', 300_000)), new DmValue(",")), "splittext output allocation budget");
+        var first = (DmList)allocations.GetGlobal("split_result").Value!;
+        Check(first.Values.Count == 1 && ((string)first.Values[0].Value!).Length == 300_000, "Second split failure lost the first completed result.");
+        allocations.InvokeGlobal("test_split_default", new DmValue(new string('x', 300_000)), new DmValue(","));
+        Check(!ReferenceEquals(first, allocations.GetGlobal("split_result").Value), "Public execution did not reset output budget.");
+    }));
+    tests.Add(($"splittext Boot output budget survives deferred drain: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var strings = json["Strings"]!.AsArray();
+        var placeholder = strings.Select((value, index) => (value, index)).Single(item => item.value!.GetValue<string>() == "split-boot-placeholder").index;
+        strings[placeholder] = new string('x', 300_000);
+        var helper = json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "test_split_boot_budget")!;
+        var worldId = TypeId(json, "/world");
+        var worldNew = json["Procs"]!.AsArray().Last(p => p!["Name"]!.GetValue<string>() == "New" && p["OwningTypeId"]!.GetValue<int>() == worldId)!;
+        worldNew["Bytecode"] = helper["Bytecode"]!.DeepClone();
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())) { InstructionBudget = 5_000_000 };
+        Throws(runtime.Boot, "splittext output allocation budget");
+        Check(((string)((DmList)runtime.GetGlobal("split_result").Value!).Values[0].Value!).Length == 300_000, "Deferred failure lost completed Boot result.");
+        runtime.InvokeGlobal("test_split_default", new DmValue("ok"), new DmValue(","));
+        Check(((DmList)runtime.GetGlobal("split_result").Value!).Values[0].Value is string value && value == "ok", "Next public execution did not reset split budget.");
+    }));
+    tests.Add(($"splittext malformed native call arity fails before empty-input handling: {artifact}", () => {
+        foreach (var count in new[] { 0, 1, 6 }) {
+            var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+            var procs = json["Procs"]!.AsArray();
+            var native = procs.Select((value, index) => (value, index)).Single(p => p.value!["Name"]!.GetValue<string>() == "splittext" && (p.value["OwningTypeId"]?.GetValue<int>() ?? 0) == 0).index;
+            var helper = procs.Single(p => p!["Name"]!.GetValue<string>() == "test_split_default")!;
+            var bytes = new List<byte>();
+            for (var i = 0; i < count; i++) bytes.Add((byte)DreamProcOpcode.PushNull);
+            bytes.Add((byte)DreamProcOpcode.Call); bytes.Add(11); bytes.AddRange(BitConverter.GetBytes(native));
+            bytes.Add(count == 0 ? (byte)0 : (byte)1); bytes.AddRange(BitConverter.GetBytes(count)); bytes.Add((byte)DreamProcOpcode.Return);
+            helper["Bytecode"] = Convert.ToBase64String(bytes.ToArray());
+            var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+            Throws(() => runtime.InvokeGlobal("test_split_default"), "requires two to five arguments");
+        }
+    }));
+    tests.Add(($"splittext executable native-name body remains executable: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var proc = json["Procs"]!.AsArray().First(p => p!["Name"]!.GetValue<string>() == "splittext")!;
+        var bytes = new List<byte> { (byte)DreamProcOpcode.ReturnFloat }; bytes.AddRange(BitConverter.GetBytes(7f)); proc["Bytecode"] = Convert.ToBase64String(bytes.ToArray());
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        runtime.InvokeGlobal("test_split_default", new DmValue("text"), new DmValue(""));
+        Check(runtime.GetGlobal("split_result").Number == 7, "Executable splittext body intercepted by native implementation.");
+    }));
+}
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

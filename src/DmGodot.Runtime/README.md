@@ -459,5 +459,40 @@ Every returned UTF-16 code unit is charged before publication, even for repeated
 reads reusing the same string. Construction has bounded metadata/work limits and
 no callbacks are retained. Failure preserves the caller's prior result. Manifest
 and base64 ingestion are separately bounded by the producer/probe. This does not
-add file writes, file(), general resource loading, DMF parsing, splittext or live
-filesystem refresh/persistence semantics.
+add file writes, file(), general resource loading, DMF parsing or live filesystem
+refresh/persistence semantics.
+
+### Bounded full-range splittext
+
+The root empty native `splittext` stub supports full-range literal string delimiters
+with exact case-sensitive, non-overlapping matching. Multi-character delimiters and
+valid Unicode strings are supported; leading, adjacent and trailing separators
+preserve empty fields. Include-delimiters accepts exactly zero/one (or null/missing
+as zero); one inserts each matched delimiter between fields. Empty string delimiters
+split ASCII input into one-character entries; include-one inserts empty strings
+between characters. Non-ASCII empty-delimiter input rejects because native byte
+splitting cannot be represented faithfully as ordinary Unicode character splitting.
+
+The compiler-supported arity is two to five arguments; malformed arity rejects first.
+Empty/nontext source then returns a fresh empty list before inspecting other arguments.
+Only missing/null/default Start=1 and End=0 are supported. Nondefault indexed search
+bounds, nonstring/null delimiters, other include flags, malformed UTF-16 host strings,
+regex and extra-argument forms reject explicitly. In particular, unsupported null/list
+delimiters are not silently replaced by an empty result: native fixtures show their
+byte-splitting behavior. Executable user-defined proc bodies are not intercepted.
+
+Native BYOND 516.1688 fixtures establish the supported output sequence, overlap,
+case, Unicode and ASCII-empty cases; pinned OpenDream's empty-text and delimiter
+coercion differences are not copied. No indexed-byte or general regex parity is
+claimed. The target dependency is ordinary newline splitting of an explicitly
+allowlisted names string; no additional file content is granted by this operation.
+
+Each UTF-16 validation scan, literal comparison and emitted code unit consumes the
+work budget before work/allocation. Adversarial repeated-prefix scans can exhaust
+that budget explicitly. The implementation does not use an unbounded String.Split
+intermediate. Outputs charge the existing aggregate 100,000 list-object/slot budget
+and a separate 1,048,576-byte UTF-16 output budget before adding/substr copying,
+including reused delimiter strings. Both allocation budgets reset only at public
+Boot/AdvanceBy (and therefore InvokeGlobal) boundaries; Boot's internal deferred
+queue drain does not reset them. No partial output is published on failure. These
+limits bound each public execution's output, not all retained strings across calls.

@@ -545,3 +545,17 @@ var/file_snapshot_result
     file_snapshot_result = file2text('semantics.dm')
 /proc/test_text_snapshot_omitted()
     file_snapshot_result = file2text()
+
+var/split_result
+/proc/test_split_default(text, delimiter)
+    split_result = splittext(text, delimiter)
+/proc/test_split_arguments(text, delimiter, start, end, include)
+    split_result = splittext(text, delimiter, start, end, include)
+/proc/test_split_twice(text, delimiter)
+    split_result = splittext(text, delimiter)
+    split_result = splittext(text, delimiter)
+
+/proc/test_split_boot_budget()
+    split_result = splittext("split-boot-placeholder", ",")
+    spawn(0)
+        split_result = splittext("split-boot-placeholder", ",")

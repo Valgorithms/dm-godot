@@ -728,6 +728,10 @@ public sealed class DmRuntime {
                         frame.Push(new(list)); break;
                     }
                     case DreamProcOpcode.DereferenceIndex: { var index = frame.Pop(); frame.Push(ReadIndex(frame.Pop(), index)); break; }
+                    case DreamProcOpcode.Initial: {
+                        var key = frame.Pop(); var owner = frame.Pop();
+                        frame.Push(InitialValue(owner, key)); break;
+                    }
                     case DreamProcOpcode.DereferenceField: { var name = Project.String(frame.Reader.Int()); frame.Push(Field(frame.Pop(), name)); break; }
                     case DreamProcOpcode.PushRefAndDereferenceField: { var value = Get(frame, frame.Reader.Reference()); frame.Push(Field(value, Project.String(frame.Reader.Int()))); break; }
                     case DreamProcOpcode.IsNull: frame.Push(frame.Pop().IsNull ? 1 : 0); break;
@@ -1070,6 +1074,87 @@ public sealed class DmRuntime {
             _ => throw new CompatibilityException($"Call argument mode {kind} is not implemented.")
         };
     }
+
+    private DmValue InitialValue(DmValue owner, DmValue key) {
+        if (key.Value is float)
+            throw new CompatibilityException("initial numeric indexing is not implemented.");
+        if (key.Value is not string name)
+            throw new CompatibilityException("initial requires a string field name.");
+        if (owner.Value is null or float or string) return DmValue.Null;
+        var typeId = owner.Value switch {
+            DmTypeReference type => type.Id,
+            DmObject instance => instance.TypeId,
+            _ => throw new CompatibilityException("initial requires a type or object owner; list/primitive forms are not implemented.")
+        };
+        if (typeId < 0 || typeId >= Data.Types.Length)
+            throw new CompatibilityException("initial has invalid type identity.");
+        void Work(int count) {
+            if (count < 0 || count > _budget)
+                throw new CompatibilityException("Instruction budget exhausted during initial ancestry lookup.");
+            _budget -= count;
+        }
+        // Explicit scans bound hash collisions and equal-prefix comparisons.
+        bool SameName(string candidate) {
+            Work(1);
+            if (candidate.Length != name.Length) return false;
+            Work(name.Length);
+            return string.Equals(candidate, name, StringComparison.Ordinal);
+        }
+        bool ContainsName(IEnumerable<string> names) {
+            foreach (var candidate in names) if (SameName(candidate)) return true;
+            return false;
+        }
+        Work(name.Length);
+        JsonElement? declared = null;
+        var declarationHasInitializer = false;
+        var hasStatic = false;
+        var atom = false; var movable = false; var mob = false; var world = false; var native = false;
+        for (int? current = typeId; current is not null; current = Data.Types[current.Value].Parent) {
+            Work(1);
+            var type = Data.Types[current.Value];
+            if (declared is null && type.Variables is { } variables) {
+                foreach (var field in variables) {
+                    if (!SameName(field.Key)) continue;
+                    declared = field.Value;
+                    declarationHasInitializer = type.InitProc is int initializer &&
+                        Data.Procs[initializer].Bytecode is { Length: > 0 };
+                    break;
+                }
+            }
+            // Root global mappings are not inherited by upstream object definitions.
+            if (!hasStatic && (current.Value != 0 || typeId == 0) && type.GlobalVariables is { } globals)
+                hasStatic = ContainsName(globals.Keys);
+            atom |= type.Path == "/atom"; movable |= type.Path == "/atom/movable";
+            mob |= type.Path == "/mob"; world |= type.Path == "/world";
+            native |= type.Path is "/client" or "/list" or "/alist" or "/savefile" or "/icon" or
+                "/matrix" or "/regex" or "/dm_filter" or "/pixloc" or "/sound" or "/image" or "/mutable_appearance" or
+                "/generator" or "/particles" or "/database" or "/database/query" or
+                "/vector" or "/callee" or "/exception";
+        }
+        if (native || name is "type" or "parent_type" or "vars" or "tag" ||
+            (atom && (ContainsName(UnsupportedAtomFields) || name is "loc" or "x" or "y" or "z")) ||
+            (movable && ContainsName(UnsupportedMovableFields)) || (mob && ContainsName(UnsupportedMobFields)) ||
+            (world && ContainsName(BuiltinWorldFields)))
+            throw new CompatibilityException("initial native/metadata field is not implemented.");
+        // Original instance Variables take precedence over any static mapping,
+        // even when that mapping is declared on a more-derived type.
+        if (declared is JsonElement value) {
+            // The compiler serializes executable defaults as null on their declaring
+            // type. Do not confuse that placeholder with a proven constant null.
+            if (value.ValueKind == JsonValueKind.Null && declarationHasInitializer)
+                throw new CompatibilityException("initial null default has ambiguous executable initializer provenance.");
+            // Raw-span length requires no temporary text allocation.
+            Work(System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(value).Length);
+            var result = ConvertValue(value);
+            if (result.Value is not (null or float or string or DmTypeReference or DmResource))
+                throw new CompatibilityException("initial mutable default is not implemented.");
+            return result;
+        }
+        if (hasStatic)
+            throw new CompatibilityException("initial static/global field is not implemented.");
+        return DmValue.Null;
+    }
+
     private DmValue Field(DmValue owner, string name) {
         if (owner.Value is DmList list && name == "len") return list.Values.Count;
         if (owner.Value is DmAssocList associative) {

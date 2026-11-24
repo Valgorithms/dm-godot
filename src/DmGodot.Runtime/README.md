@@ -228,8 +228,8 @@ only the bounded static subset described above; it does not implement dynamic ma
 loading, complete native initialization or constant-field override semantics.
 Name/icon_state normalization follows
 [AtomManager.SetAppearanceVar/GetAppearanceVar](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/AtomManager.cs).
-Original type definitions remain unmodified; this slice does not add runtime
-`initial()` support. Unsupported override diagnostics include type, field and value
+Original type definitions remain unmodified; native `initial()` fields remain
+unsupported. Unsupported override diagnostics include type, field and value
 category without printing user values.
 
 Instance variable storage shares immutable, eagerly validated type defaults until
@@ -333,3 +333,41 @@ world/atom contents, filtered and key/value loops remain outside this slice.
 Sleeping frames intentionally retain their snapshots. These per-public-execution
 work/allocation limits do not establish a global retained-heap cap, and this slice
 does not add object deletion or BYOND reference-count lifecycle compatibility.
+
+Initial (0x47) supports string-key queries on type references and object identities
+for declared immutable instance defaults. It walks original serialized type ancestry,
+preserving inherited values and explicit nulls, without consulting current public
+Variables, cloned map overrides, the instance-default cache, or any initializer.
+A serialized null is supported only when its nearest declaring type has no own
+executable initializer. Executable declarations use null placeholders whose BYOND
+initial values are not necessarily null. Those ambiguous defaults reject explicitly,
+including explicit nulls sharing that declaring type with unrelated initialization.
+Initializers on other ancestor/descendant types do not invalidate a proven nearest
+declaration. Missing fields and null/numeric/text owners return null.
+
+Optional GlobalVariables metadata is retained and validated to identify unsupported
+static/global queries. Complete instance Variables precedence is preserved over
+static mappings; root global mappings are not inherited. Numeric-index forms,
+list/resource owners, native/metadata fields (including atom name/text) and requested
+mutable/procedure encoded defaults remain explicit errors. Other unrelated defaults
+and initializer bytecode are not evaluated. Ancestry visits consume the instruction
+budget before traversal work; malformed type identities are rejected.
+The opcode/metadata subset follows pinned
+[DMOpcodeHandlers.Initial](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/DMOpcodeHandlers.cs)
+and TreeEntry.TryGetTypeVar. It does not implement all forms of initial(), including
+native loader-normalized defaults or current static-variable access.
+
+Initial queries debit input field-name UTF-16 length, each ancestry/metadata entry,
+and equal-length ordinal field-name comparisons before the work. This explicit
+scan avoids unmetered dictionary collision chains. Selected values additionally
+charge their encoded UTF-8 byte length before decoding or tagged-property scans;
+unrelated values remain untouched. Diagnostics do not echo unbounded field names.
+Repeated calls share the existing public-execution work budget; this is conservative
+work accounting, not a general retained-memory cap.
+
+The executable-null guard intentionally differs from OpenDream's raw-placeholder
+result: a bounded native BYOND 516.1688 fixture observed non-null dynamic object/list
+initial values. Numeric/text owners with string fields returned null in that fixture.
+No initializer is executed to manufacture a result. Declaring-type provenance follows
+DMCodeTree.Vars.TrySetVariableValue: nonconstant assignments/overrides emit their own
+type's null placeholder plus initializer assignment.

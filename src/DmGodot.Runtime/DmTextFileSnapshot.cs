@@ -74,6 +74,17 @@ public sealed class DmTextFileSnapshot {
         (AsciiLetter(bytes[i + 1]) || (bytes[i] != 0xff && bytes[i + 1] == (byte)'\n'));
     private static bool AsciiLetter(byte value) => value is >= (byte)'A' and <= (byte)'Z' or >= (byte)'a' and <= (byte)'z';
 
+    // Strict UTF-8 and the supported Latin-1 fallback both produce well-formed
+    // UTF-16. Removing CR cannot split a surrogate pair. Only an exact reference
+    // can reuse that guarantee without inspecting the caller's characters.
+    internal bool TryConfirmDecodedText(string text, Action<int> work) {
+        if (_texts.Length == 0 || text.Length <= _texts.Length) return false;
+        work(_texts.Length); // Fixed upper bound, independent of the matching slot.
+        foreach (var decoded in _texts)
+            if (ReferenceEquals(decoded, text)) return true;
+        return false;
+    }
+
     public string? ReadText(string path) => ReadText(path, static _ => { });
 
     internal string? ReadText(string path, Action<int> work) {

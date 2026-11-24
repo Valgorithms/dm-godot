@@ -2644,6 +2644,76 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
         }
         Check(ReferenceEquals(prior, runtime.GetGlobal("split_result").Value), "Unsupported split published a partial result.");
     }));
+    tests.Add(($"splittext reuses validation only for the owning snapshot string: {artifact}", () => {
+        var project = CompiledProject.Load(artifact);
+        var prefix = new string('x', 32);
+        var files = new Dictionary<string, byte[]> {
+            ["a"] = System.Text.Encoding.UTF8.GetBytes(prefix + "😀\r,tail"),
+            ["b"] = System.Text.Encoding.UTF8.GetBytes(prefix + "😀,tail"),
+            ["c"] = [.. System.Text.Encoding.ASCII.GetBytes(prefix), 0xe9, (byte)'a', (byte)',', 13, 10]
+        };
+        var inventory = new DmFileInventory(files.Keys.Append("tracked-without-text"));
+        var snapshot = new DmTextFileSnapshot(inventory, files);
+        var other = new DmTextFileSnapshot(inventory, files);
+        DmRuntime Runtime(int fuel, DmTextFileSnapshot? texts) {
+            var runtime = new DmRuntime(project, inventory, texts) { InstructionBudget = fuel };
+            runtime.Boot();
+            return runtime;
+        }
+        void Split(DmRuntime runtime, string text, string delimiter = ",") =>
+            runtime.InvokeGlobal("test_split_default", new DmValue(text), new DmValue(delimiter));
+        DmList Result(DmRuntime runtime) => (DmList)runtime.GetGlobal("split_result").Value!;
+
+        // The fixture loads two arguments, calls splittext, assigns, pops and implicitly returns.
+        // For one comma, validation of the delimiter, the search and emission cost 1 + n + (n - 1).
+        const int dispatches = 6;
+        foreach (var path in files.Keys) {
+            var owned = snapshot.ReadText(path)!;
+            var expected = path == "c" ? new[] { prefix + "éa", "\n" } : new[] { prefix + "😀", "tail" };
+            var nativeWork = files.Count + 2 * owned.Length;
+            var exact = Runtime(dispatches + nativeWork, snapshot);
+            exact.InvokeGlobal("test_file_snapshot_read", new DmValue(path));
+            var fromDm = (string)exact.GetGlobal("file_snapshot_result").Value!;
+            Check(ReferenceEquals(owned, fromDm), "file2text did not return the immutable snapshot entry.");
+            Split(exact, fromDm);
+            var first = Result(exact);
+            Check(first.Values.Select(v => v.Value).SequenceEqual(expected), "Decoded split fields changed.");
+            first.Values.Clear();
+            Split(exact, owned);
+            Check(!ReferenceEquals(first, Result(exact)) && Result(exact).Values.Select(v => v.Value).SequenceEqual(expected),
+                "Result mutation crossed a successful split boundary.");
+            Throws(() => Split(Runtime(dispatches + nativeWork - 1, snapshot), owned), "Instruction budget exhausted");
+            var oneShortInNative = Runtime(3 + nativeWork - 1, snapshot);
+            Split(oneShortInNative, "");
+            var prior = Result(oneShortInNative);
+            Throws(() => Split(oneShortInNative, owned), "splittext work budget");
+            Check(ReferenceEquals(prior, Result(oneShortInNative)), "A failed split published its partially emitted list.");
+        }
+
+        var source = snapshot.ReadText("a")!;
+        var hitBudget = dispatches + files.Count + 2 * source.Length;
+        var hit = Runtime(hitBudget, snapshot);
+        Split(hit, source);
+        var saved = Result(hit);
+        foreach (var copy in new[] { new string(source.AsSpan()), other.ReadText("a")! }) {
+            Check(copy == source && !ReferenceEquals(copy, source), "Negative control must use a distinct equal string.");
+            Throws(() => Split(hit, copy), "splittext work budget");
+            Check(ReferenceEquals(saved, Result(hit)), "Foreign text replaced the last completed split.");
+            // A miss pays the whole membership check AND the original source scan.
+            Split(Runtime(hitBudget + source.Length, snapshot), copy);
+            Throws(() => Split(Runtime(hitBudget + source.Length - 1, snapshot), copy), "Instruction budget exhausted");
+        }
+        Split(Runtime(dispatches + 3 * source.Length, null), source);
+        foreach (var shortText in new[] { "a,", "a,b" })
+            Split(Runtime(dispatches + 3 * shortText.Length, snapshot), shortText);
+        var malformed = source + '\ud800';
+        var normal = Runtime(1000, snapshot);
+        Split(normal, source);
+        var priorResult = Result(normal);
+        Throws(() => Split(normal, malformed), "malformed UTF-16");
+        Throws(() => Split(normal, source, malformed), "malformed UTF-16");
+        Check(ReferenceEquals(priorResult, Result(normal)), "Malformed text replaced the last completed split.");
+    }));
     tests.Add(($"splittext work and allocation limits remain distinct and atomic: {artifact}", () => {
         var project = CompiledProject.Load(artifact);
         var limited = new DmRuntime(project) { InstructionBudget = 2000 }; limited.Boot();

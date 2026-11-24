@@ -545,7 +545,8 @@ public sealed class DmRuntime {
                     throw new CompatibilityException("splittext malformed UTF-16 input is not implemented.");
             }
         }
-        ValidateText(text); ValidateText(delimiter);
+        if (_textFiles is null || !_textFiles.TryConfirmDecodedText(text, Work)) ValidateText(text);
+        ValidateText(delimiter);
         if (delimiter.Length == 0) {
             Work(text.Length);
             foreach (var character in text)

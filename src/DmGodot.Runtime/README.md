@@ -524,6 +524,15 @@ coercion differences are not copied. No indexed-byte or general regex parity is
 claimed. The target dependency is ordinary newline splitting of an explicitly
 allowlisted names string; no additional file content is granted by this operation.
 
+A configured text snapshot can certify the source string's UTF-16 validity by
+reference identity. Strict UTF-8 decoding and the supported Latin-1 fallback
+produce well-formed UTF-16, and CR removal preserves surrogate pairs. For a
+source longer than the snapshot's file count, the runtime charges one unit per
+file before checking the stored references (at most 256). An exact match saves
+the per-code-unit validation scan. A miss pays this bounded lookup cost and
+then the full validation cost. Short sources use the original scan directly.
+Delimiters always receive their ordinary validation.
+
 Each UTF-16 validation scan, literal comparison and emitted code unit consumes the
 work budget before work/allocation. Adversarial repeated-prefix scans can exhaust
 that budget explicitly. The implementation does not use an unbounded String.Split

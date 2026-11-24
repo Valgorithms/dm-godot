@@ -247,9 +247,16 @@ arguments concatenate and preserve duplicates. Null, ordinary lists, numbers and
 resources are ignored as in the pin. Exact string lookup excludes root ID zero;
 unknown strings fail. Proc/verb paths and strict associative list identities remain
 explicit capability errors. User-defined procedure bodies are not intercepted.
-Type-index construction, string searches, arguments and traversal charge the
-instruction budget; result objects/slots charge the existing aggregate list budget
-before allocation/growth. No type defaults, constructors or callbacks execute.
+Every query with a recognized root charges the full type count before using the
+child index, including repeat queries. Arguments, string searches and descendant
+visits also charge the instruction budget. Result lists and slots charge the
+aggregate list allocation budget.
+
+Runtimes sharing a compiled project reuse its completed child index. Each parsed
+type holds two integer links. On first use, the runtime fills the links in reverse
+ID order, at most 256 type records per locked batch. It exposes the index to
+traversal only after all records have been processed. The normal call completes
+synchronously. Index construction and traversal execute no DM callbacks.
 Compound list removal (-=) remains unsupported. Semantics follow pinned
 [NativeRoot.typesof](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/Native/DreamProcNativeRoot.cs)
 and ObjectTree descendant traversal; this is not complete reflection support.

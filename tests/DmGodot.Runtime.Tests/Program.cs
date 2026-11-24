@@ -813,6 +813,65 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
         runtime.InvokeGlobal("test_typesof", new DmValue(new DmTypeReference(0, definitions[0]!["Path"]!.GetValue<string>())));
         Check(Ids().SequenceEqual(Preorder(0)), "Root type identity must remain supported independently of root string lookup.");
     }));
+    tests.Add(($"typesof preserves preorder and result isolation on a shared multi-batch project: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var definitions = json["Types"]!.AsArray();
+        var start = definitions.Count;
+        // The two subtrees span three 256-ID batches. Parents may follow children in the artifact.
+        const int first = 517, second = 310, group = 550, sibling = 599;
+        var parents = new int?[600];
+        parents[first] = group; parents[sibling] = group;
+        parents[3] = first; parents[301] = 3; parents[518] = first; parents[0] = 518;
+        parents[6] = second; parents[530] = second; parents[112] = 530;
+        string PathFor(int offset) => $"/batch_type_{offset}";
+        for (var i = 0; i < parents.Length; i++) {
+            var definition = new JsonObject { ["Path"] = PathFor(i) };
+            if (parents[i] is int parent) definition["Parent"] = start + parent;
+            definitions.Add(definition);
+        }
+        int[] firstTree = [first, 3, 301, 518, 0];
+        int[] secondTree = [second, 6, 530, 112];
+        DmValue TypeAt(int offset) => new DmValue(new DmTypeReference(start + offset, PathFor(offset)));
+        DmList Result(DmRuntime r) => (DmList)r.GetGlobal("types_result").Value!;
+        void Expect(DmRuntime r, params int[] offsets) {
+            var expected = offsets.Select(i => new DmTypeReference(start + i, PathFor(i)));
+            Check(Result(r).Values.Select(value => (DmTypeReference)value.Value!).SequenceEqual(expected),
+                "typesof returned incorrect IDs, paths, order or multiplicity.");
+        }
+        var project = CompiledProject.Parse(json.ToJsonString());
+        var limited = new DmRuntime(project) { InstructionBudget = project.TypeCount - 1 };
+        limited.Boot();
+        limited.InvokeGlobal("test_typesof_empty");
+        var seed = Result(limited);
+        void ExpectLimited() {
+            Throws(() => limited.InvokeGlobal("test_typesof", TypeAt(first)), "Instruction budget exhausted during typesof");
+            Check(ReferenceEquals(seed, Result(limited)) && seed.Values.Count == 0, "Failed query replaced or mutated its prior result.");
+        }
+        ExpectLimited(); // Cold admission.
+        var left = new DmRuntime(project); left.Boot();
+        var right = new DmRuntime(project); right.Boot();
+        // Each runtime has its own DM execution thread. Only project metadata is shared.
+        Parallel.Invoke(new ParallelOptions { MaxDegreeOfParallelism = 2 },
+            () => left.InvokeGlobal("test_typesof_multiple", TypeAt(first), TypeAt(second)),
+            () => right.InvokeGlobal("test_typesof", TypeAt(first)));
+        Expect(left, [.. firstTree, .. secondTree, .. firstTree]);
+        Expect(right, firstTree);
+        var previous = Result(right);
+        previous.Values.Clear();
+        Expect(left, [.. firstTree, .. secondTree, .. firstTree]);
+        right.InvokeGlobal("test_typesof", TypeAt(first));
+        Check(!ReferenceEquals(previous, Result(right)), "A warm call reused the prior result list.");
+        Expect(right, firstTree);
+        ExpectLimited(); // Same runtime and fuel after the shared project has been indexed.
+
+        // A different project has the same serialized IDs and paths but a different actual parent.
+        definitions[start + 301]!["Parent"] = start + second;
+        var independent = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); independent.Boot();
+        independent.InvokeGlobal("test_typesof_multiple", TypeAt(first), TypeAt(second));
+        Expect(independent, first, 3, 518, 0, second, 6, 301, 530, 112, first, 3, 518, 0);
+        right.InvokeGlobal("test_typesof", TypeAt(first));
+        Expect(right, firstTree);
+    }));
     foreach (var value in new[] { "/", "", "/datum/type_family/", "/DATUM/type_family", "/missing_type" })
         tests.Add(($"typesof rejects unknown exact string {value}: {artifact}", () => {
             var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();

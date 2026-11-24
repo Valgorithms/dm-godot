@@ -5,13 +5,13 @@ using DmGodot.Runtime;
 
 // A bounded compatibility measurement. This executable has no Host reference,
 // network listener, world ticking loop, native service adapter or save access.
-const int instructionBudget = 100_000;
 var phase = "artifact_load";
 var status = "unexpected_error";
 string? artifactHash = null;
 string? inventoryHash = null;
 Exception? failure = null;
-DmRuntime? runtime = null;
+int? pendingThreads = null;
+int? logCount = null;
 var elapsed = Stopwatch.StartNew();
 var exitCode = 1;
 try {
@@ -147,11 +147,18 @@ try {
         }
     }
     phase = "runtime_construct";
-    runtime = new DmRuntime(project, inventory, textFiles) { InstructionBudget = instructionBudget };
+    using var session = new DmStartupSession(project, inventory, textFiles);
     phase = "boot";
-    runtime.Boot();
-    status = "boot_returned";
-    exitCode = 0;
+    try {
+        while (session.Advance() is null) {
+            // Continue to the next startup phase without advancing virtual time.
+        }
+        status = "boot_returned";
+        exitCode = 0;
+    } finally {
+        pendingThreads = session.PendingThreads;
+        logCount = session.LogCount;
+    }
 } catch (CompatibilityException error) {
     failure = error;
     status = "blocked";
@@ -184,7 +191,7 @@ Console.WriteLine(JsonSerializer.Serialize(new {
     phase,
     artifact_sha256 = artifactHash,
     file_inventory_sha256 = inventoryHash,
-    instruction_budget = instructionBudget,
+    instruction_budget = DmRuntime.DefaultInstructionBudget,
     configured_gc_heap_hard_limit = Environment.GetEnvironmentVariable("DOTNET_GCHeapHardLimit"),
     gc_total_available_memory_bytes = gcAvailable,
     gc_heap_size_bytes_last_collection = gcHeap,
@@ -194,8 +201,8 @@ Console.WriteLine(JsonSerializer.Serialize(new {
     peak_working_set_bytes = peakWorkingSet,
     memory_measurement_error = memoryMeasurementError,
     elapsed_ms = elapsed.ElapsedMilliseconds,
-    pending_threads = runtime?.PendingThreads,
-    log_count = runtime?.Logs.Count,
+    pending_threads = pendingThreads,
+    log_count = logCount,
     exception_type = failure?.GetType().FullName,
     message = failure?.Message
 }));

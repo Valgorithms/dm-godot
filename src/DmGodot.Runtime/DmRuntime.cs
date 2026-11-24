@@ -60,6 +60,7 @@ public sealed class DmRuntime {
         DmValue Type, DmValue ParentType, string? ExecutableInitializerType);
     private long _sequence;
     private bool _booted;
+    private CancellationToken _startupCancellation;
     private int _budget;
     // Bound constructor work as well as bytecode dispatch: one dimension opcode can
     // otherwise allocate an unbounded graph. Reset only at public execution boundaries.
@@ -80,13 +81,20 @@ public sealed class DmRuntime {
         "time", "maxx", "maxy", "maxz", "name", "area", "turf", "mob", "icon_size", "view", "byond_version", "byond_build",
         "fps", "tick_lag"
     };
-    public int InstructionBudget { get; init; } = 100_000;
+    public const int DefaultInstructionBudget = 100_000;
+    public int InstructionBudget { get; init; } = DefaultInstructionBudget;
     private CompiledData Data => Project.Data;
 
     private readonly DmFileInventory? _fileInventory;
     private readonly DmTextFileSnapshot? _textFiles;
 
-    public DmRuntime(CompiledProject project, DmFileInventory? fileInventory = null, DmTextFileSnapshot? textFiles = null) {
+    public DmRuntime(CompiledProject project, DmFileInventory? fileInventory = null, DmTextFileSnapshot? textFiles = null)
+        : this(project, fileInventory, textFiles, default) { }
+
+    internal DmRuntime(CompiledProject project, DmFileInventory? fileInventory, DmTextFileSnapshot? textFiles,
+        CancellationToken startupCancellation) {
+        _startupCancellation = startupCancellation;
+        _startupCancellation.ThrowIfCancellationRequested();
         Project = project;
         _fileInventory = fileInventory;
         if (textFiles is not null && !ReferenceEquals(fileInventory, textFiles.Inventory))
@@ -94,20 +102,28 @@ public sealed class DmRuntime {
         _textFiles = textFiles;
         _globals = new DmValue[Data.Globals?.GlobalCount ?? 0];
         foreach (var (id, value) in Data.Globals?.GlobalValues ?? []) {
+            _startupCancellation.ThrowIfCancellationRequested();
             if (id < 0 || id >= _globals.Length) throw new CompatibilityException($"Invalid global index {id}.");
             _globals[id] = ConvertValue(value);
         }
         World = CreateInstance(FindType("/world"));
         // Constructor-time initialization has one fixed aggregate budget; the init-only
         // InstructionBudget setting applies to later Boot/InvokeGlobal/AdvanceBy calls.
-        _budget = 100_000;
+        _budget = DefaultInstructionBudget;
         LoadMaps();
         World.SetVariable("maxx", Width);
         World.SetVariable("maxy", Height);
         World.SetVariable("maxz", Levels);
+        _startupCancellation.ThrowIfCancellationRequested();
     }
 
     public void Boot() {
+        InitializeGlobals();
+        FinishBoot();
+    }
+
+    internal void InitializeGlobals() {
+        _startupCancellation.ThrowIfCancellationRequested();
         if (_booted) throw new InvalidOperationException("The world has already booted.");
         _booted = true;
         _budget = InstructionBudget;
@@ -118,11 +134,18 @@ public sealed class DmRuntime {
             Execute(fiber);
             if (fiber.Frames.Count > 0) throw new CompatibilityException("A yielding global initializer is not supported.");
         }
+        _startupCancellation.ThrowIfCancellationRequested();
+    }
+
+    internal void FinishBoot() {
+        _startupCancellation.ThrowIfCancellationRequested();
         // Each callback is an independent root: execute its prefix now, but do not
         // drain deferred work until all map callbacks and world.New have started.
         var visitedAreas = new HashSet<DmObject>();
-        foreach (var cell in _mapCells)
+        foreach (var cell in _mapCells) {
+            _startupCancellation.ThrowIfCancellationRequested();
             if (visitedAreas.Add(cell.Area)) StartNew(cell.Area, []);
+        }
         if (_defaultArea is not null && visitedAreas.Add(_defaultArea)) StartNew(_defaultArea, []);
         foreach (var cell in _mapCells.OrderBy(c => c.Z).ThenByDescending(c => c.Y).ThenByDescending(c => c.X))
             StartNew(cell.Turf, []);
@@ -139,9 +162,13 @@ public sealed class DmRuntime {
         // allocation charged to the same public Boot boundary.
         _budget = InstructionBudget;
         DrainUntil(Time);
+        // The session may now transfer the world. Its token has no authority over play.
+        _startupCancellation.ThrowIfCancellationRequested();
+        _startupCancellation = default;
     }
 
     private void StartNew(DmObject instance, DmValue[] arguments) {
+        _startupCancellation.ThrowIfCancellationRequested();
         var proc = ResolveProc(instance.TypeId, "New");
         if (proc is not null) Execute(new Fiber(new Frame(proc, instance, arguments)));
     }
@@ -289,6 +316,7 @@ public sealed class DmRuntime {
                     throw new CompatibilityException("Malformed map block dimensions.");
                 var blockMovables = new List<(int X, int Y, DmObject Instance)>();
                 for (var i = 0; i < block.Cells.Length; i++) {
+                    _startupCancellation.ThrowIfCancellationRequested();
                     var x = block.X + i % block.Width;
                     var y = block.Y + block.Height - 1 - i / block.Width;
                     if (x < 1 || y < 1 || block.Z < 1 || x > map.MaxX || y > map.MaxY || block.Z > map.MaxZ)
@@ -313,6 +341,7 @@ public sealed class DmRuntime {
                     _mapTurfs.Add((x, y, block.Z), turf);
                     var entities = new List<DmObject>();
                     foreach (var entity in cell.Objects) {
+                        _startupCancellation.ThrowIfCancellationRequested();
                         RequireMapType(entity.Type, "/atom/movable", "entity");
                         var instance = CreateInstance(entity.Type, initializeLater: true);
                         ApplyMapEntityOverrides(instance, entity.VarOverrides);
@@ -337,6 +366,7 @@ public sealed class DmRuntime {
         // Single-level area coordinates use lowest y, then x. Multi-level upstream
         // coordinate caching is not a stable contract here, so reject those reads.
         foreach (var cell in _mapCells) {
+            _startupCancellation.ThrowIfCancellationRequested();
             if (_mapLocations.TryGetValue(cell.Area, out var first) && first.Z != cell.Z)
                 _multiLevelAreas.Add(cell.Area);
             _mapLocations.TryAdd(cell.Area, new(cell.X, cell.Y, cell.Z, null));
@@ -614,6 +644,7 @@ public sealed class DmRuntime {
     }
     private void Execute(Fiber fiber) {
         while (fiber.Frames.Count > 0) {
+            _startupCancellation.ThrowIfCancellationRequested();
             var frame = fiber.Frames[^1];
             var offset = frame.Reader.Position;
             if (--_budget < 0) throw Fault(frame, offset, "Instruction budget exhausted; possible non-yielding loop.");

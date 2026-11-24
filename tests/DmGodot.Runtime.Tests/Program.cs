@@ -129,6 +129,148 @@ tests.Add(("map area overrides rejected rather than ignored", () => {
 
 var semanticsPath = args.Length > 1 ? args[1] : "build/semantics.json";
 var optimizedPath = args.Length > 2 ? args[2] : "build/semantics-optimized.json";
+
+T StartupError<T>(Action action) where T : Exception {
+    try { action(); }
+    catch (T error) { return error; }
+    throw new Exception($"Expected startup to throw {typeof(T).Name}.");
+}
+
+CompiledProject StartupProject(string artifact, bool loopInWorldNew = false) {
+    var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+    var procs = json["Procs"]!.AsArray();
+    JsonNode Fixture(string name) => procs.Single(p => p!["Name"]!.GetValue<string>() == name)!;
+    // Use the compiler-emitted fixture bodies without running this setup for unrelated DM tests.
+    json["GlobalInitProc"] = Fixture("test_startup_global_init").DeepClone();
+    int world = TypeId(json, "/world");
+    var chain = json["Types"]![world]!["Procs"]!.AsArray().Single(c => procs[c![0]!.GetValue<int>()]!["Name"]!.GetValue<string>() == "New");
+    var worldNew = procs[chain!.AsArray()[^1]!.GetValue<int>()]!;
+    var arithmetic = Fixture("test_arithmetic");
+    worldNew["Bytecode"] = loopInWorldNew
+        ? Convert.ToBase64String([(byte)DreamProcOpcode.Jump, 0, 0, 0, 0])
+        : arithmetic["Bytecode"]!.GetValue<string>();
+    worldNew["SourceInfo"] = loopInWorldNew ? new JsonArray() : arithmetic["SourceInfo"]!.DeepClone();
+    return CompiledProject.Parse(json.ToJsonString());
+}
+
+var startupInventory = new DmFileInventory(["startup.txt"]);
+var startupText = new DmTextFileSnapshot(startupInventory, new Dictionary<string, byte[]> {
+    ["startup.txt"] = System.Text.Encoding.UTF8.GetBytes("ok")
+});
+
+tests.Add(("startup publishes the fully booted runtime once and preserves direct Boot order", () => {
+    var project = StartupProject(semanticsPath);
+    var direct = new DmRuntime(project, startupInventory, startupText); direct.Boot();
+    using var token = new CancellationTokenSource();
+    using var session = new DmStartupSession(project, startupInventory, startupText, token.Token);
+    Check(session.Advance() is null && session.LogCount == 1 && session.PendingThreads == 2,
+        "Global initialization published the runtime or ran queued work.");
+    var published = session.Advance() ?? throw new Exception("Completed startup returned no runtime.");
+    Check(published.Logs.Select(l => l.Text).SequenceEqual(new[] { "startup prefix", "arithmetic-ok", "startup due=12" }),
+        "world.New and due work ran out of order.");
+    Check(published.GetGlobal("init_count").Number == 12 && published.Logs.SequenceEqual(direct.Logs) &&
+        published.PendingThreads == 1 && published.Time == 0 && session.LogCount == 3 && session.PendingThreads == 1,
+        "Published runtime differs from direct Boot.");
+    StartupError<InvalidOperationException>(() => session.Advance());
+    token.Cancel(); session.Dispose();
+    published.AdvanceBy(1); direct.AdvanceBy(1);
+    Check(published.Logs.SequenceEqual(direct.Logs) && published.GetGlobal("init_count").Number == 112 &&
+        published.GetGlobal("init_count") == direct.GetGlobal("init_count") && published.PendingThreads == 0 &&
+        published.Time == 1, "Publication retained the startup cancellation token or lost the delayed continuation.");
+    Check(session.LogCount == 3 && session.PendingThreads == 1, "Session diagnostics changed after handoff.");
+}));
+
+tests.Add(("two startup callers can transfer the runtime only once", () => {
+    using var session = new DmStartupSession(StartupProject(semanticsPath), startupInventory, startupText);
+    Check(session.Advance() is null, "First step published a runtime.");
+    using var gate = new Barrier(2);
+    DmRuntime? Attempt() {
+        if (!gate.SignalAndWait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Startup callers failed to rendezvous.");
+        try { return session.Advance() ?? throw new Exception("Completed phase did not transfer the runtime."); }
+        catch (InvalidOperationException) { return null; }
+    }
+    Task<DmRuntime?> Caller() => Task.Factory.StartNew(Attempt, CancellationToken.None,
+        TaskCreationOptions.LongRunning, TaskScheduler.Default);
+    var first = Caller(); var second = Caller();
+    Check(Task.WaitAll([first, second], TimeSpan.FromSeconds(15)), "Concurrent startup did not terminate.");
+    var published = new[] { first.Result, second.Result }.OfType<DmRuntime>().Single();
+    Check(published.GetGlobal("init_count").Number == 12 && published.Logs.Count == 3 && published.PendingThreads == 1,
+        "Concurrent handoff repeated or skipped initial callbacks.");
+    StartupError<InvalidOperationException>(() => session.Advance());
+}));
+
+tests.Add(("startup failures preserve phase diagnostics and never publish the mutated candidate", () => {
+    foreach (var loopInWorldNew in new[] { false, true }) {
+        var project = StartupProject(semanticsPath, loopInWorldNew);
+        var texts = loopInWorldNew ? startupText : new DmTextFileSnapshot(startupInventory, []);
+        var direct = new DmRuntime(project, startupInventory, texts);
+        var reference = StartupError<CompatibilityException>(direct.Boot);
+        Check(reference.Message.Contains(loopInWorldNew ? "Instruction budget exhausted" : "content capability excludes") &&
+            direct.GetGlobal("init_count").Number == (loopInWorldNew ? 2 : 1) && direct.Logs.Count == 1 &&
+            direct.PendingThreads == 2, "Reference fixture did not fail after its mutations.");
+        using var session = new DmStartupSession(project, startupInventory, texts);
+        if (loopInWorldNew) Check(session.Advance() is null, "A candidate escaped before world.New.");
+        var fault = StartupError<CompatibilityException>(() => session.Advance());
+        Check(fault.Message == reference.Message && session.LogCount == direct.Logs.Count &&
+            session.PendingThreads == direct.PendingThreads, "Failed startup lost the original fault or diagnostics.");
+        StartupError<InvalidOperationException>(() => session.Advance());
+        session.Dispose();
+        StartupError<InvalidOperationException>(() => session.Advance());
+        direct.AdvanceBy(0);
+        Check(direct.GetGlobal("init_count").Number == (loopInWorldNew ? 12 : 11),
+            "Direct runtime postfault behavior changed.");
+    }
+}));
+
+tests.Add(("startup cancellation and disposal discard the candidate before publication", () => {
+    var project = StartupProject(semanticsPath);
+    using var cancelled = new CancellationTokenSource();
+    cancelled.Cancel();
+    StartupError<OperationCanceledException>(() => new DmStartupSession(project, startupInventory, startupText, cancelled.Token));
+    foreach (var advanceGlobals in new[] { false, true }) {
+        foreach (var dispose in new[] { false, true }) {
+            using var token = new CancellationTokenSource();
+            using var session = new DmStartupSession(project, startupInventory, startupText, token.Token);
+            if (advanceGlobals) Check(session.Advance() is null, "First step published a runtime.");
+            if (dispose) session.Dispose();
+            else {
+                token.Cancel();
+                StartupError<OperationCanceledException>(() => session.Advance());
+            }
+            StartupError<InvalidOperationException>(() => session.Advance());
+            Check(session.LogCount == (advanceGlobals ? 1 : 0) && session.PendingThreads == (advanceGlobals ? 2 : 0),
+                "Discarded startup executed subsequent DM or lost the last diagnostic counts.");
+        }
+    }
+}));
+
+[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+(DmStartupSession Session, WeakReference<CompiledProject> Project) ParkStartup(string artifact, CancellationToken token) {
+    var project = StartupProject(artifact);
+    var session = new DmStartupSession(project, startupInventory, startupText, token);
+    Check(session.Advance() is null, "First step published a runtime.");
+    return (session, new WeakReference<CompiledProject>(project));
+}
+
+[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+static bool ProjectAlive(WeakReference<CompiledProject> project) => project.TryGetTarget(out _);
+
+tests.Add(("cancelling a parked session releases its candidate without another host step", () => {
+    using var token = new CancellationTokenSource();
+    var (session, project) = ParkStartup(semanticsPath, token.Token);
+    using (session) {
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+        Check(ProjectAlive(project), "Positive control lost the live candidate project.");
+        token.Cancel();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+        Check(!ProjectAlive(project), "A cancelled parked session still retains its candidate.");
+        Check(session.LogCount == 1 && session.PendingThreads == 2, "Discarding the candidate lost its diagnostics.");
+        GC.KeepAlive(session);
+    }
+}));
+
 void Semantics(string name, string proc, string[] immediate, string[] afterOne, bool optimized = false) {
     tests.Add((name, () => {
         var runtime = new DmRuntime(CompiledProject.Load(optimized ? optimizedPath : semanticsPath));

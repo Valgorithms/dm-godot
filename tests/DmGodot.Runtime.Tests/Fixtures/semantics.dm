@@ -559,3 +559,16 @@ var/split_result
     split_result = splittext("split-boot-placeholder", ",")
     spawn(0)
         split_result = splittext("split-boot-placeholder", ",")
+
+// Selected as global initialization only by the startup-session tests.
+/proc/test_startup_global_init()
+    init_count = 1
+    world << "startup prefix"
+    spawn(0)
+        init_count += 10
+        world << "startup due=[init_count]"
+    spawn(1)
+        init_count += 100
+        world << "startup later"
+    if(file2text("startup.txt") == "ok")
+        init_count = 2

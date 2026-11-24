@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "source_revision": "98f34be22b7c594de1b9b113f9962cd61f6f0091",
+  "source_tree": "9abda66518f15b1f66d3f0da6621930aed38a6e2",
+  "paths": [
+    "config/names/first_male.txt"
+  ],
+  "blobs": {
+    "config/names/first_male.txt": {
+      "oid": "c392f1815cb0ed405c9b1576c67aa80f5afed239",
+      "bytes": 7035,
+      "sha256": "491779da4695522f5fc8795852b2cc484ddcc076c8d5ec07a71423c1bf14077b"
+    }
+  }
+}

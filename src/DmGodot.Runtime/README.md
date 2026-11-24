@@ -411,8 +411,53 @@ The optional producer/probe manifest contains only regular Git tree file names
 and blocked symlink/gitlink names, bound to source commit/tree and artifact SHA-256.
 Git replacement objects are disabled and metadata reads are bounded. It excludes
 untracked/live/persistent state; no symlink is followed and no file content capability
-is granted. This does not implement file2text, file(), writes, savefiles or unrestricted
-filesystem access. Primary evidence: pinned
+is granted by the names capability. It does not grant file(), writes, savefiles or
+unrestricted filesystem access; text reads require the separate capability below. Primary evidence: pinned
 [NativeProc_fexists](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/Native/DreamProcNativeRoot.cs)
 and bounded native BYOND 516.1688 text/root/directory/resource fixtures; the deliberate
 resource/directory differences above are not claimed as OpenDream parity.
+
+### Allowlisted immutable source text
+
+The root empty native `file2text` stub supports a separate explicit
+`DmTextFileSnapshot`, bound by reference identity to the same configured file
+inventory. Runtime code performs no host I/O. Non-path DM values return null;
+string paths require the text capability, even for the logical
+root. Missing snapshot paths return null. Known directories/root and zero-byte
+allowed files return empty text. A tracked regular file without allowed content
+raises an explicit capability error rather than pretending the file is missing.
+Unsafe paths and native file() handles remain unsupported. Embedded resource values
+reject explicitly: the artifact only carries a path, not independently bound packed
+bytes. Native fixtures demonstrate that embedded literals can retain compile-time
+bytes when loose string/file() paths change. This capability must not substitute a
+loose file for a packed resource, even if names match. No resource aliases, cache
+refresh, or packed-resource content store is implemented.
+
+Decoding follows bounded BYOND 516.1688 byte-fixture evidence, not the incompatible
+OpenDream replacement-decoder behavior: truncate at the first NUL byte, remove a
+leading UTF-8 BOM, decode strict valid UTF-8, and remove all carriage returns.
+If UTF-8 decoding fails, the only supported legacy subset requires every high byte
+to stand alone between ASCII letters, and no leading UTF-8 BOM; these bytes map to
+same-valued Latin-1 code points. Adjacent/mixed/terminal malformed byte patterns
+reject explicitly. This is not a general encoding detector or an unrestricted
+Latin-1 fallback. Native digest-only fixtures confirmed all 128 isolated high-byte
+values and the exact approved names file. No mutable input byte arrays are retained.
+
+Only `config/names/first_male.txt` from the pinned public Civ13 source is approved
+in `compatibility/civ13-text-allowlist.json` for the target probe. Its exact regular Git
+blob ID, byte length and SHA-256 are checked independently against that allowlist.
+Producer reads immutable Git object IDs with replacement objects disabled; it never
+uses worktree file contents. The content manifest is bound to source commit/tree,
+compiled artifact and separately supplied allowlist hash. Source licensing remains
+applicable. Names-only inventory configuration grants no text access by itself.
+
+Limits: 256 files, 65,536 raw bytes per file, 1,048,576 aggregate raw bytes and
+1,048,576 aggregate normalized decoded UTF-16 bytes. Per-file intermediate decoding
+is bounded by its raw cap; stored strings are immutable. Query work uses the metered
+inventory and ordinal binary text lookup, with no hash-collision-dependent scans.
+Every returned UTF-16 code unit is charged before publication, even for repeated
+reads reusing the same string. Construction has bounded metadata/work limits and
+no callbacks are retained. Failure preserves the caller's prior result. Manifest
+and base64 ingestion are separately bounded by the producer/probe. This does not
+add file writes, file(), general resource loading, DMF parsing, splittext or live
+filesystem refresh/persistence semantics.

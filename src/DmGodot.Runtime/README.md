@@ -371,3 +371,48 @@ initial values. Numeric/text owners with string fields returned null in that fix
 No initializer is executed to manufacture a result. Declaring-type provenance follows
 DMCodeTree.Vars.TrySetVariableValue: nonconstant assignments/overrides emit their own
 type's null placeholder plus initializer assignment.
+
+
+### Explicit file-existence snapshot
+
+The empty root native `fexists` stub accepts exact case-sensitive relative string
+paths through an optional sealed `DmFileInventory`. Runtime code never queries the
+host filesystem, cwd, resource cache or file contents. An unconfigured string query,
+including the empty root, raises a capability error. A configured snapshot returns
+one for its empty logical root, listed files (including zero-byte files), and implicit
+directories with or without a trailing slash. Missing paths and a regular filename
+with a trailing slash return zero. Empty directories absent from the tracked names
+cannot be represented; this is a tracked-source snapshot, not a live filesystem.
+
+Non-path values return null. Compiler embedded resource values also return null,
+matching the measured BYOND 516.1688 ordinary text-resource fixture. Their paths do
+not bypass the capability or cause lookups. This intentionally differs from pinned
+OpenDream's resource-path coercion. Native `file()` references have different native
+behavior and remain unsupported; no resource contents or generic file handles are
+represented by this slice. Real compiled literal/file() fixtures protect that boundary.
+
+Paths reject rooted/drive/UNC forms, backslashes, control characters, colons,
+wildcards, empty interior components, dot/dotdot and .git components. No aliases,
+case folding, path normalization or host-dependent separator handling are performed.
+Symlink/submodule paths and descendants reject explicitly. Files and blocked paths
+must not duplicate each other or conflict with implied directory ancestry.
+
+The inventory defensively copies names into ordinal-sorted arrays. Binary searches
+charge bounded comparison work, including shared prefixes and blocked ancestry;
+there are no inventory hash collision chains or query-dependent retained callbacks.
+Validation and the sole directory-prefix allocation are charged before work. Input
+caps are 100,000 entries, 16 MiB UTF-8 names and 4,096 UTF-16 code units per path.
+Construction sorting and hierarchy checks share a 33,554,432-unit comparison/work
+limit. These conservative bounds can reject otherwise valid large inventories or
+queries rather than silently omit names. Repeated DM calls share the normal public
+execution budget; host construction limits are separate.
+
+The optional producer/probe manifest contains only regular Git tree file names
+and blocked symlink/gitlink names, bound to source commit/tree and artifact SHA-256.
+Git replacement objects are disabled and metadata reads are bounded. It excludes
+untracked/live/persistent state; no symlink is followed and no file content capability
+is granted. This does not implement file2text, file(), writes, savefiles or unrestricted
+filesystem access. Primary evidence: pinned
+[NativeProc_fexists](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/Native/DreamProcNativeRoot.cs)
+and bounded native BYOND 516.1688 text/root/directory/resource fixtures; the deliberate
+resource/directory differences above are not claimed as OpenDream parity.

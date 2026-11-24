@@ -616,7 +616,7 @@ public sealed class DmRuntime {
                     case DreamProcOpcode.BooleanNot: frame.Push(frame.Pop().IsTruthy ? 0 : 1); break;
                     case DreamProcOpcode.Negate: frame.Push(-frame.Pop().Number); break;
                     case DreamProcOpcode.Add: { var right = frame.Pop(); var left = frame.Pop(); frame.Push(Add(left, right)); break; }
-                    case DreamProcOpcode.Subtract: Binary(frame, (a, b) => a - b); break;
+                    case DreamProcOpcode.Subtract: { var right = frame.Pop(); var left = frame.Pop(); frame.Push(Subtract(left, right)); break; }
                     case DreamProcOpcode.Multiply: Binary(frame, (a, b) => a * b); break;
                     case DreamProcOpcode.Divide: Binary(frame, (a, b) => b == 0 ? throw new CompatibilityException("Division by zero.") : a / b); break;
                     case DreamProcOpcode.Modulus: Binary(frame, IntegerModulus); break;
@@ -727,6 +727,119 @@ public sealed class DmRuntime {
         }
     }
 
+
+
+    private DmValue Subtract(DmValue left, DmValue right) {
+        if (left.Value is DmAssocList)
+            throw new CompatibilityException("Strict associative list subtraction is not implemented.");
+        if (left.Value is not DmList source) return left.Number - right.Number;
+        if (right.Value is not (null or float or string or DmTypeReference or DmResource or DmObject or DmList or DmAssocList))
+            throw new CompatibilityException("List subtraction operand representation is not implemented.");
+        void Work(int count) {
+            if (count < 0 || count > _budget)
+                throw new CompatibilityException("Instruction budget exhausted during list subtraction.");
+            _budget -= count;
+        }
+        // A local comparer meters both hashing and every collision comparison.
+        // Detach in finally: returned dictionaries must never retain this runtime.
+        var comparer = new SubtractionComparer(Work);
+        try {
+            foreach (var value in source.Values) comparer.Validate(value);
+            if (right.Value is DmList rhs)
+                foreach (var value in rhs.Values) comparer.Validate(value);
+            else comparer.Validate(right);
+            Dictionary<DmValue, DmValue>? associations = null;
+            if (source.Values.Count != 0 && source.Associations.Count != 0) {
+                // EnsureCapacity(0) only reads capacity. Charge the entire slot array
+                // before enumeration, including tombstones from removed host entries.
+                Work(source.Associations.EnsureCapacity(0));
+                foreach (var pair in source.Associations) comparer.Validate(pair.Key);
+                // Scratch storage is separately bounded; orphan entries do not consume
+                // the observable output-list allocation allowance.
+                if (1L + 2L * source.Associations.Count > ListAllocationLimit)
+                    throw new CompatibilityException("List subtraction scratch allocation limit exceeded.");
+                Work(source.Associations.EnsureCapacity(0));
+                Work(source.Associations.Count);
+                associations = new Dictionary<DmValue, DmValue>(source.Associations.Count, comparer);
+                foreach (var pair in source.Associations) {
+                    // Different hashes can occupy one bucket without invoking Equals.
+                    // Count bounds all bucket links, independently of hash distribution.
+                    Work(associations.Count);
+                    associations.Add(pair.Key, pair.Value);
+                }
+            }
+            Work(source.Values.Count);
+            ChargeListAllocation(1L + source.Values.Count);
+            var result = new DmList(comparer);
+            result.Values.AddRange(source.Values);
+            if (associations is not null) {
+                foreach (var key in source.Values) {
+                    Work(1);
+                    Work(associations.Count);
+                    if (!associations.TryGetValue(key, out var value)) continue;
+                    Work(result.Associations.Count);
+                    if (!result.Associations.ContainsKey(key)) {
+                        ChargeListAllocation(2);
+                        Work(result.Associations.Count);
+                        // Meter copying old entries when the output dictionary grows.
+                        // Geometric capacity growth has bounded amortized storage cost.
+                        if (result.Associations.Count == result.Associations.EnsureCapacity(0))
+                            Work(result.Associations.Count);
+                        result.Associations.Add(key, value);
+                    }
+                }
+            }
+            void RemoveOne(DmValue value) {
+                Work(1);
+                for (var index = result.Values.Count - 1; index >= 0; index--) {
+                    if (!comparer.Equals(result.Values[index], value)) continue;
+                    Work(result.Values.Count - index - 1);
+                    Work(result.Associations.Count);
+                    result.Associations.Remove(value);
+                    result.Values.RemoveAt(index);
+                    return;
+                }
+            }
+            if (right.Value is DmList removals) {
+                foreach (var value in removals.Values) RemoveOne(value);
+            } else RemoveOne(right);
+            return new(result);
+        } finally {
+            comparer.Detach();
+        }
+    }
+
+    private sealed class SubtractionComparer(Action<int> work) : IEqualityComparer<DmValue> {
+        private Action<int>? _work = work;
+        public void Detach() => _work = null;
+        public void Validate(DmValue value) {
+            _work?.Invoke(1);
+            if (value.Value is not (null or float or string or DmTypeReference or DmResource or DmObject or DmList or DmAssocList))
+                throw new CompatibilityException("List subtraction value representation is not implemented.");
+        }
+        private static string? Text(DmValue value) => value.Value switch {
+            string text => text, DmResource resource => resource.Path,
+            DmTypeReference type => type.Path, _ => null
+        };
+        public bool Equals(DmValue left, DmValue right) {
+            // Once detached retain precisely the public default dictionary behavior.
+            if (_work is null) return left.Equals(right);
+            Validate(left); Validate(right);
+            if (left.Value?.GetType() == right.Value?.GetType() &&
+                !(left.Value is DmTypeReference l && right.Value is DmTypeReference r && l.Id != r.Id)) {
+                var a = Text(left); var b = Text(right);
+                if (a is not null && b is not null && a.Length == b.Length) _work(a.Length);
+            }
+            return left.Equals(right);
+        }
+        public int GetHashCode(DmValue value) {
+            if (_work is not null) {
+                Validate(value);
+                if (Text(value) is { } text) _work(text.Length);
+            }
+            return value.GetHashCode();
+        }
+    }
 
     private DmList TypesOf(DmValue[] arguments) {
         void Work(int count = 1) {

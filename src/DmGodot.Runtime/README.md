@@ -250,7 +250,7 @@ explicit capability errors. User-defined procedure bodies are not intercepted.
 Type-index construction, string searches, arguments and traversal charge the
 instruction budget; result objects/slots charge the existing aggregate list budget
 before allocation/growth. No type defaults, constructors or callbacks execute.
-List subtraction remains unsupported. Semantics follow pinned
+Compound list removal (-=) remains unsupported. Semantics follow pinned
 [NativeRoot.typesof](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/Native/DreamProcNativeRoot.cs)
 and ObjectTree descendant traversal; this is not complete reflection support.
 
@@ -261,3 +261,38 @@ Long shared prefixes therefore cannot bypass the instruction budget. Unequal
 lengths require no character scan. Unknown-path errors report only the numeric
 UTF-16 length, never the input text. This changes resource limits/diagnostics,
 not exact case-sensitive lookup, root exclusion, or proc/verb guards.
+
+Ordinary list subtraction now follows pinned
+[DreamList.CreateCopy/OperatorSubtract/Remove](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Objects/Types/DreamList.cs).
+It returns a fresh shallow copy, retains only associations whose keys occur in
+the positional sequence, and removes the last matching occurrence once per ordinary
+RHS list entry (or once for a scalar RHS). Removing a key drops its association even
+if duplicate positional keys remain. RHS associations are not removal values.
+Inputs remain untouched; nested values preserve reference identity. A strict list
+on the RHS is one scalar identity, while strict-list subtraction on the LHS and
+custom object subtraction remain unsupported. Numeric/null arithmetic is unchanged.
+Copies charge one list plus positional slots and each unique live association pair
+before growth. Copy work, comparisons and RemoveAt suffix shifts consume the
+instruction budget. Failure does not publish a partial result, and both budgets
+retain their existing public execution boundaries. This does not implement -=.
+
+Subtraction charges UTF-16 text work for strings and resource/type-reference paths
+before hashing and equal-length comparisons, including dictionary collisions.
+Unknown host value representations in compared/copied positional entries or
+association keys are rejected without invoking their Equals/GetHashCode methods.
+Nested DM lists/objects retain shallow reference identity. Association values are
+copied as values without invoking equality. A metered temporary association index
+avoids uncharged lookup in the source dictionary; its separate scratch limit is
+100,000 logical object/key/value slots, including orphan keys. Source dictionary
+capacity (including tombstones), scratch initialization, output dictionary growth,
+comparison scans and suffix shifts charge work before execution. Output allocation
+still charges only the result object, positional slots and unique live pairs.
+The temporary comparer detaches its runtime callback on success or failure; the
+returned public dictionary then has ordinary DmValue equality/hash behavior.
+
+Every scratch/output dictionary operation also debits its populated entry count
+before traversing a bucket: different stored hashes can collide in one bucket
+without invoking Equals. This conservative bound may stop association-heavy
+operations earlier even with well-distributed hashes. Positional-only subtraction
+has no dictionary indexing or such charge. The scratch cap is per operation; the
+existing output allocation allowance remains cumulative per public boundary.

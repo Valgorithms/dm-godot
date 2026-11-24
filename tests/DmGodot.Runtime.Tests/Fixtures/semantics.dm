@@ -537,3 +537,11 @@ var/file_snapshot_result
     file_snapshot_result = fexists(file(value))
 /proc/test_file_snapshot_omitted()
     file_snapshot_result = fexists()
+
+/proc/test_text_snapshot_twice(value)
+    file_snapshot_result = file2text(value)
+    file_snapshot_result = file2text(value)
+/proc/test_text_snapshot_literal()
+    file_snapshot_result = file2text('semantics.dm')
+/proc/test_text_snapshot_omitted()
+    file_snapshot_result = file2text()

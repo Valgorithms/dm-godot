@@ -131,5 +131,67 @@ class ProbeTests(unittest.TestCase):
             self.assertIn("path component", report["stdout_tail"])
 
 
+    def test_text_manifest_requires_independent_allowlist_and_exact_blob_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = root / "probe.json"
+            artifact.write_text(json.dumps(self.smoke))
+            raw = b"fixture\r\n"
+            blob_id = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+            allowed = root / "allowed.json"
+            allowed.write_text(json.dumps({"schema": 1, "source_revision": "1" * 40, "source_tree": "2" * 40,
+                "paths": ["fixture.txt"], "blobs": {"fixture.txt": {"oid": blob_id, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}}}))
+            entry = {"path": "fixture.txt", "blob_id": blob_id, "byte_length": len(raw),
+                     "sha256": hashlib.sha256(raw).hexdigest(), "base64": base64.b64encode(raw).decode()}
+            data = {"schema": 1, "scope": "tracked-source-filesystem-snapshot",
+                    "source_revision": "1" * 40, "source_tree": "2" * 40,
+                    "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                    "files": ["fixture.txt", "excluded.txt"], "blocked_paths": [],
+                    "content_allowlist_sha256": hashlib.sha256(allowed.read_bytes()).hexdigest(),
+                    "contents": [entry]}
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(data))
+            command = [self.dotnet, str(PROBE_DLL), str(artifact), "--file-inventory", str(manifest),
+                       "--source-revision", "1" * 40, "--source-tree", "2" * 40]
+            report = capture_probe(command, timeout=15)
+            self.assertEqual(report["measurement_status"], "error")
+            self.assertIn("separately supplied trusted allowlist", report["stdout_tail"])
+            command += ["--content-allowlist", str(allowed)]
+            self.assertEqual(capture_probe(command, timeout=15)["runtime_status"], "boot_returned")
+            for field, value in (("path", "excluded.txt"), ("byte_length", len(raw) + 1),
+                                 ("blob_id", "0" * 40), ("sha256", "0" * 64), ("base64", "%%%"),
+                                 ("base64", "a" * 90000)):
+                bad = json.loads(json.dumps(data))
+                bad["contents"][0][field] = value
+                manifest.write_text(json.dumps(bad))
+                report = capture_probe(command, timeout=15)
+                self.assertEqual(report["measurement_status"], "error", field)
+            good_allowed = json.loads(allowed.read_text())
+            variants = [
+                dict(good_allowed, source_tree="3" * 40),
+                dict(good_allowed, extra=True),
+                dict(good_allowed, paths=["fixture.txt", "fixture.txt"]),
+                dict(good_allowed, paths=[]),
+                dict(good_allowed, blobs={}),
+                dict(good_allowed, blobs=dict(good_allowed["blobs"], extra=good_allowed["blobs"]["fixture.txt"])),
+            ]
+            for key, value in (("oid", "0" * 40), ("sha256", "0" * 64), ("bytes", 65537)):
+                variant = json.loads(json.dumps(good_allowed))
+                variant["blobs"]["fixture.txt"][key] = value
+                variants.append(variant)
+            for variant in variants:
+                allowed.write_text(json.dumps(variant))
+                rebound = dict(data, content_allowlist_sha256=hashlib.sha256(allowed.read_bytes()).hexdigest())
+                manifest.write_text(json.dumps(rebound))
+                report = capture_probe(command, timeout=15)
+                self.assertEqual(report["measurement_status"], "error")
+                self.assertNotIn("fixture\\r", json.dumps(report))
+            allowed.write_text(json.dumps(good_allowed))
+            for field, value in (("content_allowlist_sha256", "0" * 64), ("contents", [])):
+                bad = dict(data, **{field: value})
+                manifest.write_text(json.dumps(bad))
+                self.assertEqual(capture_probe(command, timeout=15)["measurement_status"], "error")
+
+
 if __name__ == "__main__":
     unittest.main()

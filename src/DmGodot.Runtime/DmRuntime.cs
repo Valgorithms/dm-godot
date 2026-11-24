@@ -82,10 +82,14 @@ public sealed class DmRuntime {
     private CompiledData Data => Project.Data;
 
     private readonly DmFileInventory? _fileInventory;
+    private readonly DmTextFileSnapshot? _textFiles;
 
-    public DmRuntime(CompiledProject project, DmFileInventory? fileInventory = null) {
+    public DmRuntime(CompiledProject project, DmFileInventory? fileInventory = null, DmTextFileSnapshot? textFiles = null) {
         Project = project;
         _fileInventory = fileInventory;
+        if (textFiles is not null && !ReferenceEquals(fileInventory, textFiles.Inventory))
+            throw new CompatibilityException("Text snapshot must share the configured file inventory identity.");
+        _textFiles = textFiles;
         _globals = new DmValue[Data.Globals?.GlobalCount ?? 0];
         foreach (var (id, value) in Data.Globals?.GlobalValues ?? []) {
             if (id < 0 || id >= _globals.Length) throw new CompatibilityException($"Invalid global index {id}.");
@@ -468,6 +472,23 @@ public sealed class DmRuntime {
         }
     }
 
+    private DmValue FileText(DmValue value) {
+        if (value.Value is DmResource)
+            throw new CompatibilityException("file2text embedded resource bytes are not represented by the text capability.");
+        if (value.Value is not string path) return DmValue.Null;
+        if (_textFiles is null)
+            throw new CompatibilityException("file2text requires an explicitly configured allowlisted text snapshot.");
+        void Work(int amount) {
+            if (amount < 0 || amount > _budget)
+                throw new CompatibilityException("file2text work budget exhausted.");
+            _budget -= amount;
+        }
+        var result = _textFiles.ReadText(path, Work);
+        if (result is null) return DmValue.Null;
+        Work(result.Length); // Charge every immutable returned UTF-16 code unit before publication.
+        return new(result);
+    }
+
     private DmValue FileExists(DmValue value) {
         // Compiler embedded resources are distinct from native file() references;
         // the latter API is unsupported. Measured embedded text resources return null.
@@ -575,6 +596,8 @@ public sealed class DmRuntime {
                             frame.Push(new(TypesOf(args)));
                         } else if (proc.OwningTypeId == 0 && proc.Name == "fexists" && proc.Bytecode is not { Length: > 0 }) {
                             frame.Push(FileExists(args.Length == 0 ? DmValue.Null : args[0]));
+                        } else if (proc.OwningTypeId == 0 && proc.Name == "file2text" && proc.Bytecode is not { Length: > 0 }) {
+                            frame.Push(FileText(args.Length == 0 ? DmValue.Null : args[0]));
                         } else {
                             if (proc.Bytecode is not { Length: > 0 } && !CanExecuteEmpty(proc))
                                 throw new CompatibilityException($"Native proc '{proc.Name}' is not implemented.");

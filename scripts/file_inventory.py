@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import base64
+import json
 from pathlib import Path
 import re
 import selectors
@@ -76,8 +78,63 @@ def artifact_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+
+MAX_CONTENT_FILES = 256
+MAX_CONTENT_FILE_BYTES = 64 * 1024
+MAX_CONTENT_BYTES = 1024 * 1024
+MAX_ALLOWLIST_BYTES = 128 * 1024
+
+
+def exact_keys(value: object, keys: set[str]) -> None:
+    if not isinstance(value, dict) or set(value) != keys:
+        raise ValueError("Invalid trusted content allowlist shape.")
+
+
+def validate_allowlist(data: dict, revision: str, tree: str) -> None:
+    exact_keys(data, {"schema", "source_revision", "source_tree", "paths", "blobs"})
+    if type(data["schema"]) is not int or data["schema"] != 1 or data["source_revision"] != revision or data["source_tree"] != tree:
+        raise ValueError("Trusted content allowlist source binding mismatch.")
+    paths, blobs = data["paths"], data["blobs"]
+    if not isinstance(paths, list) or not 1 <= len(paths) <= MAX_CONTENT_FILES or not all(isinstance(p, str) for p in paths):
+        raise ValueError("Invalid trusted content allowlist count.")
+    if len(set(paths)) != len(paths) or not isinstance(blobs, dict) or set(blobs) != set(paths):
+        raise ValueError("Trusted content allowlist path set mismatch.")
+    total = 0
+    for path in paths:
+        validate_path(path)
+        entry = blobs[path]
+        exact_keys(entry, {"oid", "bytes", "sha256"})
+        if not isinstance(entry["oid"], str) or not re.fullmatch(r"[0-9a-f]{40}", entry["oid"]) or not isinstance(entry["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
+            raise ValueError("Invalid trusted content blob digest.")
+        length = entry["bytes"]
+        if type(length) is not int or not 0 <= length <= MAX_CONTENT_FILE_BYTES:
+            raise ValueError("Trusted content per-file byte limit exceeded.")
+        total += length
+        if total > MAX_CONTENT_BYTES:
+            raise ValueError("Trusted content total byte limit exceeded.")
+
+
+def load_allowlist(path: Path, revision: str, tree: str) -> tuple[dict, str]:
+    # Cap reads before JSON parsing, including growth after opening.
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_ALLOWLIST_BYTES + 1)
+    if len(raw) > MAX_ALLOWLIST_BYTES:
+        raise ValueError("Content allowlist size limit exceeded.")
+    def unique(pairs):
+        data = {}
+        for key, value in pairs:
+            if key in data:
+                raise ValueError("Duplicate content allowlist property.")
+            data[key] = value
+        return data
+    data = json.loads(raw, object_pairs_hook=unique)
+    validate_allowlist(data, revision, tree)
+    return data, hashlib.sha256(raw).hexdigest()
+
+
 def build_inventory(source: Path, *, source_revision: str, source_tree: str,
-                    artifact: Path, artifact_sha256: str) -> dict:
+                    artifact: Path, artifact_sha256: str, content_allowlist: dict | None = None,
+                    content_allowlist_sha256: str | None = None) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", source_revision) or not re.fullmatch(r"[0-9a-f]{40}", source_tree):
         raise ValueError("Invalid source commit/tree binding.")
     if not re.fullmatch(r"[0-9a-f]{64}", artifact_sha256):
@@ -100,6 +157,7 @@ def build_inventory(source: Path, *, source_revision: str, source_tree: str,
     if data and not data.endswith(b"\0"):
         raise ValueError("Truncated Git tree metadata.")
     files, blocked = [], []
+    regular_blobs = {}
     count = total = 0
     for record in data.split(b"\0"):
         if not record:
@@ -114,6 +172,7 @@ def build_inventory(source: Path, *, source_revision: str, source_tree: str,
             raise ValueError("Snapshot inventory size limit exceeded.")
         if mode in ("100644", "100755") and kind == "blob":
             files.append(path)
+            regular_blobs[path] = object_id
         elif (mode == "120000" and kind == "blob") or (mode == "160000" and kind == "commit"):
             blocked.append(path)
         else:
@@ -121,7 +180,7 @@ def build_inventory(source: Path, *, source_revision: str, source_tree: str,
     verify_source()
     if artifact_digest(artifact) != artifact_sha256:
         raise ValueError("Snapshot artifact changed during inventory construction.")
-    return {
+    result = {
         "schema": 1,
         "scope": "tracked-source-filesystem-snapshot",
         "source_revision": source_revision,
@@ -130,3 +189,31 @@ def build_inventory(source: Path, *, source_revision: str, source_tree: str,
         "files": files,
         "blocked_paths": blocked,
     }
+
+    if content_allowlist is not None:
+        validate_allowlist(content_allowlist, source_revision, source_tree)
+        if not isinstance(content_allowlist_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", content_allowlist_sha256):
+            raise ValueError("Missing text snapshot allowlist binding.")
+        contents = []
+        for path in content_allowlist["paths"]:
+            expected = content_allowlist["blobs"][path]
+            object_id = regular_blobs.get(path)
+            if object_id is None or object_id != expected["oid"]:
+                raise ValueError("Allowlisted text differs from regular source-tree blob.")
+            size = int(git(absolute, "cat-file", "-s", object_id))
+            if size != expected["bytes"]:
+                raise ValueError("Allowlisted source blob length mismatch.")
+            raw = bounded_output(["git", "--no-replace-objects", "-C", str(absolute), "cat-file", "blob", object_id], limit=size)
+            digest = hashlib.sha256(raw).hexdigest()
+            if len(raw) != size or hashlib.sha1(b"blob " + str(size).encode("ascii") + b"\0" + raw).hexdigest() != object_id or digest != expected["sha256"]:
+                raise ValueError("Source blob size/digest mismatch.")
+            contents.append({"path": path, "blob_id": object_id, "byte_length": size,
+                             "sha256": digest, "base64": base64.b64encode(raw).decode("ascii")})
+        verify_source()
+        if artifact_digest(artifact) != artifact_sha256:
+            raise ValueError("Snapshot artifact changed during content construction.")
+        result["content_allowlist_sha256"] = content_allowlist_sha256
+        result["contents"] = contents
+    elif content_allowlist_sha256 is not None:
+        raise ValueError("Missing trusted content allowlist.")
+    return result

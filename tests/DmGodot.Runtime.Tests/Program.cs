@@ -2102,12 +2102,145 @@ tests.Add(("file snapshot never falls back to a real current-directory file", ()
         var configured = new DmRuntime(project, new DmFileInventory([])); configured.Boot();
         configured.InvokeGlobal("test_file_snapshot", new DmValue("decoy.txt"));
         Check(configured.GetGlobal("file_snapshot_result").Number == 0, "Snapshot consulted ambient cwd.");
+        var inventory = new DmFileInventory([]);
+        var content = new DmRuntime(project, inventory, new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]>()));
+        content.Boot(); content.InvokeGlobal("test_file_snapshot_read", new DmValue("decoy.txt"));
+        Check(content.GetGlobal("file_snapshot_result").IsNull, "Text snapshot read ambient cwd contents.");
         var unconfigured = new DmRuntime(project); unconfigured.Boot();
         Throws(() => unconfigured.InvokeGlobal("test_file_snapshot", new DmValue("decoy.txt")), "explicitly configured");
     } finally {
         Directory.SetCurrentDirectory(originalDirectory);
         Directory.Delete(fixtureDirectory, recursive: true);
     }
+}));
+
+
+foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
+    tests.Add(($"allowlisted text preserves measured UTF8 decoding and owns immutable values: {artifact}", () => {
+        var raw = new byte[] { 0xef, 0xbb, 0xbf, 65, 13, 10, 66, 13, 67, 10, 0, 68 };
+        var contents = new Dictionary<string, byte[]> { ["text"] = raw, ["empty"] = [] };
+        var inventory = new DmFileInventory(["text", "empty", "excluded", "dir/child"], ["link"]);
+        var text = new DmTextFileSnapshot(inventory, contents);
+        Array.Fill(raw, (byte)88); contents.Clear();
+        var runtime = new DmRuntime(CompiledProject.Load(artifact), inventory, text); runtime.Boot();
+        runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("text"));
+        var result = runtime.GetGlobal("file_snapshot_result");
+        Check((string)result.Value! == "A\nBC\n", "Measured UTF8/BOM/CR-removal/NUL-truncation decoding changed.");
+        runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("text"));
+        Check(ReferenceEquals(result.Value, runtime.GetGlobal("file_snapshot_result").Value), "Text was not reused as an immutable snapshot.");
+        runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("empty"));
+        Check(runtime.GetGlobal("file_snapshot_result").Value is string value && value.Length == 0, "Empty file became null.");
+        runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("missing"));
+        Check(runtime.GetGlobal("file_snapshot_result").IsNull, "Absent file must return null.");
+        foreach (var name in new[] { "dir", "dir/", "" }) {
+            runtime.InvokeGlobal("test_file_snapshot_read", new DmValue(name));
+            Check(runtime.GetGlobal("file_snapshot_result").Value is string directoryText && directoryText.Length == 0, "Logical root/directory must return empty text.");
+        }
+        Throws(() => runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("excluded")), "content capability excludes");
+        Throws(() => runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("link/file")), "symlink or submodule");
+        foreach (var name in new[] { "../file", "/file", "C:/file", ".git/config" })
+            Throws(() => runtime.InvokeGlobal("test_file_snapshot_read", new DmValue(name)), "path");
+        Throws(() => runtime.InvokeGlobal("test_file_snapshot_read", new DmValue(new DmResource(null!))), "embedded resource bytes");
+    }));
+    tests.Add(($"text default denial, identity binding and atomic work guards: {artifact}", () => {
+        var project = CompiledProject.Load(artifact);
+        var bare = new DmRuntime(project); bare.Boot();
+        foreach (var value in new[] { DmValue.Null, new DmValue(1f), new DmValue(new DmList()),
+            new DmValue(new DmAssocList()), new DmValue(bare.World), new DmValue(new DmTypeReference(0, "/")) }) {
+            bare.InvokeGlobal("test_file_snapshot_read", value);
+            Check(bare.GetGlobal("file_snapshot_result").IsNull, "Nonpath must not require capability.");
+        }
+        Throws(() => bare.InvokeGlobal("test_file_snapshot_read", new DmValue("missing")), "explicitly configured");
+        Throws(() => bare.InvokeGlobal("test_file_snapshot_read", new DmValue("")), "explicitly configured");
+        var inventory = new DmFileInventory(["seed", "large"]);
+        var texts = new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]> {
+            ["seed"] = System.Text.Encoding.UTF8.GetBytes("seed"), ["large"] = Enumerable.Repeat((byte)65, 60000).ToArray() });
+        Throws(() => new DmRuntime(project, new DmFileInventory(["seed", "large"]), texts), "inventory identity");
+        var bounded = new DmRuntime(project, inventory, texts) { InstructionBudget = 100 }; bounded.Boot();
+        bounded.InvokeGlobal("test_file_snapshot_read", new DmValue("seed"));
+        Throws(() => bounded.InvokeGlobal("test_file_snapshot_read", new DmValue("large")), "file2text work budget");
+        Check(bounded.GetGlobal("file_snapshot_result").Value is string seed && seed == "seed", "Failed read replaced prior result.");
+        var repeated = new DmRuntime(project, inventory, texts); repeated.Boot();
+        Throws(() => repeated.InvokeGlobal("test_text_snapshot_twice", new DmValue("large")), "file2text work budget");
+        Check(((string)repeated.GetGlobal("file_snapshot_result").Value!).Length == 60000, "First successful result was lost.");
+        repeated.InvokeGlobal("test_file_snapshot_read", new DmValue("large"));
+        Check(((string)repeated.GetGlobal("file_snapshot_result").Value!).Length == 60000, "Public execution boundary did not reset work.");
+    }));
+    tests.Add(($"text embedded resources cannot substitute loose-name content authority: {artifact}", () => {
+        var project = CompiledProject.Load(artifact);
+        var inventory = new DmFileInventory(["semantics.dm", "excluded"]);
+        var texts = new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]> { ["semantics.dm"] = System.Text.Encoding.UTF8.GetBytes("controlled é😀") });
+        var runtime = new DmRuntime(project, inventory, texts); runtime.Boot();
+        runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("semantics.dm"));
+        Check(runtime.GetGlobal("file_snapshot_result").Value is string value && value == "controlled é😀", "String path did not use explicit snapshot contents.");
+        Throws(() => runtime.InvokeGlobal("test_text_snapshot_literal"), "embedded resource bytes");
+        foreach (var path in new[] { "semantics.dm", "excluded", "missing", "../unsafe" })
+            Throws(() => runtime.InvokeGlobal("test_file_snapshot_read", new DmValue(new DmResource(path))), "embedded resource bytes");
+        Check(runtime.GetGlobal("file_snapshot_result").Value is string prior && prior == "controlled é😀", "Unsupported packed resource changed prior string result.");
+        runtime.InvokeGlobal("test_text_snapshot_omitted");
+        Check(runtime.GetGlobal("file_snapshot_result").IsNull, "Omitted file2text argument did not return null.");
+        var namesOnly = new DmRuntime(project, inventory); namesOnly.Boot();
+        Throws(() => namesOnly.InvokeGlobal("test_file_snapshot_read", new DmValue("semantics.dm")), "explicitly configured");
+        Throws(() => namesOnly.InvokeGlobal("test_file_snapshot_read", new DmValue("")), "explicitly configured");
+        var emptyCapability = new DmRuntime(project, inventory, new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]>())); emptyCapability.Boot();
+        Throws(() => emptyCapability.InvokeGlobal("test_file_snapshot_read", new DmValue("semantics.dm")), "content capability excludes");
+        var noLooseFile = new DmFileInventory([]);
+        var absent = new DmRuntime(project, noLooseFile, new DmTextFileSnapshot(noLooseFile, new Dictionary<string, byte[]>())); absent.Boot();
+        Throws(() => absent.InvokeGlobal("test_text_snapshot_literal"), "embedded resource bytes");
+    }));
+    tests.Add(($"executable file2text body is not replaced: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var proc = json["Procs"]!.AsArray().First(p => p!["Name"]!.GetValue<string>() == "file2text")!;
+        var bytes = new List<byte> { (byte)DreamProcOpcode.ReturnFloat };
+        bytes.AddRange(BitConverter.GetBytes(7f)); proc["Bytecode"] = Convert.ToBase64String(bytes.ToArray());
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("../native-would-reject"));
+        Check(runtime.GetGlobal("file_snapshot_result").Number == 7, "Executable file2text body intercepted.");
+    }));
+}
+tests.Add(("text normalization handles valid Unicode and measured byte boundaries", () => {
+    var inventory = new DmFileInventory(["value"]);
+    foreach (var (bytes, expected) in new[] {
+        (System.Text.Encoding.UTF8.GetBytes("é😀e\u0301"), "é😀e\u0301"),
+        (new byte[] { 0xef, 0xbb, 0xbf, 65 }, "A"),
+        (new byte[] { 65, 13, 10, 66, 13, 67, 13, 13, 10, 68 }, "A\nBC\nD"),
+        (new byte[] { 0xc3, 0xa9, 0, 0xff }, "é"),
+        (new byte[] { 0, 0xff }, "")
+    }) {
+        var text = new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]> { ["value"] = bytes });
+        Check(text.ReadText("value") == expected, "Measured decoding boundary changed.");
+    }
+    var isolatedHighBytes = Enumerable.Range(128, 128).SelectMany(b => new[] { (byte)'x', (byte)b, (byte)'y' }).Concat(System.Text.Encoding.ASCII.GetBytes("tail")).ToArray();
+    var latin = new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]> { ["value"] = isolatedHighBytes });
+    var actual = latin.ReadText("value")!;
+    Check(actual == System.Text.Encoding.Latin1.GetString(isolatedHighBytes), "ASCII-letter-flanked high bytes did not preserve Latin1 code points.");
+    Check(System.Text.Encoding.UTF8.GetByteCount(actual) == 516 &&
+        Convert.ToHexString(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(actual))).Equals("47a81fbb6e88a0c87a7bf0fdeece6d91", StringComparison.OrdinalIgnoreCase),
+        "All-128-high-byte fixture differs from measured native length/digest.");
+    foreach (var bytes in new[] {
+        new byte[] { 0xc3, 0xa9, 124, 0xff }, new byte[] { 0xff, 124, 0xc3, 0xa9 },
+        new byte[] { 0xff, 0, 65 }, new byte[] { 0xff, 0xfe, 104, 0 },
+        new byte[] { 0xef, 0xbb, 0xbf, 120, 0xe9, 121 }, new byte[] { 120, 0xe9 },
+        new byte[] { 120, 0xe9, 0xe8, 121 }
+    }) Throws(() => new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]> { ["value"] = bytes }), "encoding is not supported");
+}));
+tests.Add(("text snapshot ingress limits cover raw, decoded and entry bounds", () => {
+    var directoryInventory = new DmFileInventory(["dir/child"]);
+    foreach (var name in new[] { "dir", "" })
+        Throws(() => new DmTextFileSnapshot(directoryInventory, new Dictionary<string, byte[]> { [name] = [] }), "not a regular");
+    Throws(() => new DmTextFileSnapshot(directoryInventory, new[] {
+        new KeyValuePair<string, byte[]>("dir/child", []), new KeyValuePair<string, byte[]>("dir/child", []) }), "Duplicate");
+    var names = Enumerable.Range(0, 257).Select(i => "f" + i).ToArray();
+    var inventory = new DmFileInventory(names);
+    Throws(() => new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]> { ["missing"] = [] }), "not a regular");
+    Throws(() => new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]> { ["f0"] = new byte[65537] }), "per-file");
+    Throws(() => new DmTextFileSnapshot(inventory, names.Select(name => new KeyValuePair<string, byte[]>(name, []))), "count limit");
+    var ascii = Enumerable.Repeat((byte)65, 65536).ToArray();
+    _ = new DmTextFileSnapshot(inventory, names.Take(8).Select(name => new KeyValuePair<string, byte[]>(name, ascii)));
+    Throws(() => new DmTextFileSnapshot(inventory, names.Take(9).Select(name => new KeyValuePair<string, byte[]>(name, ascii))), "decoded byte");
+    var compact = System.Text.Encoding.UTF8.GetBytes(new string('\u0800', 21845) + "a");
+    _ = new DmTextFileSnapshot(inventory, names.Take(16).Select(name => new KeyValuePair<string, byte[]>(name, compact)));
+    Throws(() => new DmTextFileSnapshot(inventory, names.Take(17).Select(name => new KeyValuePair<string, byte[]>(name, compact))), "raw byte");
 }));
 
 var failed = 0;

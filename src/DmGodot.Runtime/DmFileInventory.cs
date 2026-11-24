@@ -107,6 +107,9 @@ public sealed class DmFileInventory {
 
     public bool ContainsFile(string path) => ContainsPath(path, static _ => { });
 
+    // Callers validate paths first; directories/root must never authorize content.
+    internal bool ContainsRegularFile(string path, Action<int> work) => Contains(_files, path, work);
+
     internal bool ContainsPath(string path, Action<int> work) {
         if (path is null || path.Length > MaximumPathLength)
             throw new CompatibilityException("File snapshot path length limit exceeded.");

@@ -8,22 +8,26 @@ on:
       - 'scripts/check_civ13_compile.py'
       - 'scripts/check_civ13_runtime_probe.py'
       - 'scripts/file_inventory.py'
+      - 'compatibility/civ13-text-allowlist.json'
       - 'tools/DmGodot.CompatibilityProbe/**'
       - 'src/DmGodot.Runtime/**'
       - 'scripts/compile.py'
       - 'scripts/bootstrap_opendream.py'
       - 'compatibility/targets.json'
+      - 'compatibility/civ13-text-files.json'
   pull_request:
     paths:
       - '.github/workflows/compile-civ13.yml'
       - 'scripts/check_civ13_compile.py'
       - 'scripts/check_civ13_runtime_probe.py'
       - 'scripts/file_inventory.py'
+      - 'compatibility/civ13-text-allowlist.json'
       - 'tools/DmGodot.CompatibilityProbe/**'
       - 'src/DmGodot.Runtime/**'
       - 'scripts/compile.py'
       - 'scripts/bootstrap_opendream.py'
       - 'compatibility/targets.json'
+      - 'compatibility/civ13-text-files.json'
 
 permissions:
   contents: read
@@ -63,7 +67,7 @@ jobs:
         env:
           # Diagnostic 2 GiB GC heap cap after the 1 GiB construction OOM; not a memory optimization.
           DOTNET_GCHeapHardLimit: '0x80000000'
-        run: python scripts/check_civ13_runtime_probe.py --tracked-source-files
+        run: python scripts/check_civ13_runtime_probe.py --tracked-source-files --content-allowlist compatibility/civ13-text-allowlist.json
       - name: Preserve diagnostics and provenance
         if: always()
         uses: actions/upload-artifact@v4

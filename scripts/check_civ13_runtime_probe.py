@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 from bootstrap_opendream import ROOT, find_dotnet
-from file_inventory import build_inventory, artifact_digest, git
+from file_inventory import build_inventory, artifact_digest, git, load_allowlist
 
 PROBE_DLL = ROOT / "tools" / "DmGodot.CompatibilityProbe" / "bin" / "Release" / "net10.0" / "DmGodot.CompatibilityProbe.dll"
 TIMEOUT_SECONDS = 60
@@ -58,6 +58,7 @@ def main() -> int:
     parser.add_argument("--artifact", type=Path, default=ROOT / "build" / "civ13" / "civ13.json")
     parser.add_argument("--tracked-source-files", action="store_true",
                         help="Opt in to a pinned Git-tree file-existence snapshot (not live filesystem access).")
+    parser.add_argument("--content-allowlist", type=Path, help="Explicit pinned public Git-blob content capability; requires --tracked-source-files.")
     args = parser.parse_args()
     artifact = args.artifact.resolve()
     output = artifact.parent / "runtime-probe.json"
@@ -69,9 +70,13 @@ def main() -> int:
             raise ValueError("Expected a successful clean pinned Civ13 compilation.")
         if digest != provenance.get("artifact_sha256"):
             raise ValueError("Artifact differs from compilation provenance.")
+        if args.content_allowlist is not None and not args.tracked_source_files:
+            raise ValueError("Content allowlist requires tracked source inventory.")
         command = [find_dotnet(), str(PROBE_DLL), str(artifact)]
         snapshot = None
         manifest_hash = None
+        content_summary = None
+        names_manifest_hash = None
         if args.tracked_source_files:
             snapshot = build_inventory(ROOT / "vendor" / "Civ13", source_revision=target["revision"],
                                        source_tree=provenance["source_tree"], artifact=artifact, artifact_sha256=digest)
@@ -81,13 +86,33 @@ def main() -> int:
                 raise ValueError("File inventory manifest exceeds size limit.")
             manifest.write_bytes(manifest_bytes)
             manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
+            names_manifest_hash = manifest_hash
+            if args.content_allowlist is not None:
+                allowed, allowed_hash = load_allowlist(args.content_allowlist, target["revision"], provenance["source_tree"])
+                snapshot = build_inventory(ROOT / "vendor" / "Civ13", source_revision=target["revision"],
+                                           source_tree=provenance["source_tree"], artifact=artifact, artifact_sha256=digest,
+                                           content_allowlist=allowed, content_allowlist_sha256=allowed_hash)
+                manifest = artifact.parent / "file-inventory-content.private.json"
+                manifest_bytes = (json.dumps(snapshot, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
+                if len(manifest_bytes) > 32 * 1024 * 1024:
+                    raise ValueError("File inventory manifest exceeds size limit.")
+                manifest.write_bytes(manifest_bytes)
+                manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
+                content_summary = {"allowlist_sha256": allowed_hash, "files": len(snapshot["contents"]),
+                                   "raw_bytes": sum(entry["byte_length"] for entry in snapshot["contents"]),
+                                   "scope": "Explicit pinned public Git blobs only; no live filesystem or arbitrary tracked content access."}
+
             command += ["--file-inventory", str(manifest), "--source-revision", target["revision"],
                         "--source-tree", provenance["source_tree"]]
+        if content_summary is not None:
+            command += ["--content-allowlist", str(args.content_allowlist.resolve())]
         engine_revision = git(ROOT, "rev-parse", "HEAD")
         report = capture_probe(command, expected_digest=digest, expected_inventory_hash=manifest_hash)
+        if content_summary is not None:
+            report["text_snapshot"] = content_summary
         if snapshot is not None:
             report["file_inventory"] = {
-                "scope": snapshot["scope"], "sha256": manifest_hash,
+                "scope": snapshot["scope"], "sha256": manifest_hash, "uploaded_names_only_sha256": names_manifest_hash,
                 "source_revision": snapshot["source_revision"], "source_tree": snapshot["source_tree"],
                 "artifact_sha256": digest, "regular_files": len(snapshot["files"]),
                 "blocked_paths": len(snapshot["blocked_paths"]),

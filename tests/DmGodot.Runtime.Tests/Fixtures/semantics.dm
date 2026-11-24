@@ -523,3 +523,17 @@ var/datum/initial_parent/initial_owner
 
 /proc/test_initial_owner_evaluation(owner)
     initial_result = initial(initial_owner_evaluation(owner):scalar)
+
+// fexists consults only an explicitly injected tracked-source snapshot.
+var/file_snapshot_result
+/proc/test_file_snapshot(value)
+    file_snapshot_result = fexists(value)
+/proc/test_file_snapshot_read(value)
+    file_snapshot_result = file2text(value)
+
+/proc/test_file_snapshot_literal()
+    file_snapshot_result = fexists('semantics.dm')
+/proc/test_file_snapshot_file(value)
+    file_snapshot_result = fexists(file(value))
+/proc/test_file_snapshot_omitted()
+    file_snapshot_result = fexists()

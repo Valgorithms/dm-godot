@@ -1989,6 +1989,127 @@ foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath
         Check(runtime.GetGlobal("entity_initial_result").Number == 1, "Initial consulted the current public dictionary.");
     }));
 
+
+foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
+    tests.Add(($"file snapshot exact presence, paths and defensive ownership: {artifact}", () => {
+        var names = new HashSet<string> { "config/present.txt", "Case.txt", "dir/child" };
+        var blocked = new HashSet<string> { "link", "submodule" };
+        var inventory = new DmFileInventory(names, blocked);
+        names.Clear(); names.Add("ambient.txt"); blocked.Clear();
+        var runtime = new DmRuntime(CompiledProject.Load(artifact), inventory); runtime.Boot();
+        foreach (var (name, expected) in new[] { ("config/present.txt", 1f), ("Case.txt", 1f),
+            ("case.txt", 0f), ("ambient.txt", 0f), ("missing.txt", 0f), ("dir", 1f), ("dir/", 1f), ("", 1f), ("Case.txt/", 0f), ("missing/", 0f) }) {
+            runtime.InvokeGlobal("test_file_snapshot", new DmValue(name));
+            Check(runtime.GetGlobal("file_snapshot_result").Number == expected, "Snapshot presence changed: " + name);
+        }
+        runtime.InvokeGlobal("test_file_snapshot", new DmValue(new DmResource("config/present.txt")));
+        Check(runtime.GetGlobal("file_snapshot_result").IsNull, "Embedded resource must not query its logical path.");
+        runtime.InvokeGlobal("test_file_snapshot", new DmValue(new DmResource("missing.txt")));
+        Check(runtime.GetGlobal("file_snapshot_result").IsNull, "Embedded missing resource must remain a non-filesystem resource.");
+        foreach (var name in new[] { "link", "link/child", "link/", "submodule/file" })
+            Throws(() => runtime.InvokeGlobal("test_file_snapshot", new DmValue(name)), "symlink or submodule");
+        foreach (var name in new[] { "/absolute", "C:/file", @"C:\file", @"\\host\share", "../sibling",
+            "a/../b", "./file", "a//b", "a/./b", ".git/config", "a/.GIT/config", "a\0b", "a\nb", "*.txt", @"a\b" })
+            Throws(() => runtime.InvokeGlobal("test_file_snapshot", new DmValue(name)), "file snapshot path");
+        runtime.InvokeGlobal("test_file_snapshot", new DmValue(new DmResource("../vendor/file")));
+        Check(runtime.GetGlobal("file_snapshot_result").IsNull, "Embedded resource unexpectedly exercised path capability.");
+        Throws(() => runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("config/present.txt")), "file2text");
+    }));
+    tests.Add(($"file snapshot default denial, empty capability and invalid arguments: {artifact}", () => {
+        var project = CompiledProject.Load(artifact);
+        var runtime = new DmRuntime(project); runtime.Boot();
+        foreach (var value in new[] { DmValue.Null, new DmValue(1f), new DmValue(new DmList()),
+            new DmValue(new DmAssocList()), new DmValue(runtime.World), new DmValue(new DmTypeReference(0, "/")),
+            new DmValue(new DmResource(null!)), new DmValue(new DmResource("config/present.txt")) }) {
+            runtime.InvokeGlobal("test_file_snapshot", value);
+            Check(runtime.GetGlobal("file_snapshot_result").IsNull, "Non-path argument must return null without capability.");
+        }
+        Throws(() => runtime.InvokeGlobal("test_file_snapshot", new DmValue("")), "explicitly configured");
+        Throws(() => runtime.InvokeGlobal("test_file_snapshot", new DmValue("file")), "explicitly configured");
+        var empty = new DmRuntime(project, new DmFileInventory([])); empty.Boot();
+        empty.InvokeGlobal("test_file_snapshot", new DmValue("file"));
+        Check(empty.GetGlobal("file_snapshot_result").Number == 0, "Configured empty must differ from missing capability.");
+        empty.InvokeGlobal("test_file_snapshot", new DmValue(""));
+        Check(empty.GetGlobal("file_snapshot_result").Number == 1, "Configured root must exist even without regular files.");
+        var bounded = new DmRuntime(project, new DmFileInventory([])) { InstructionBudget = 32 }; bounded.Boot();
+        Throws(() => bounded.InvokeGlobal("test_file_snapshot", new DmValue(new string('x', 20))), "path work budget");
+        Throws(() => empty.InvokeGlobal("test_file_snapshot", new DmValue(new string('x', 4097))), "path length");
+    }));
+    tests.Add(($"file snapshot bounded shared-prefix lookup preserves prior results: {artifact}", () => {
+        var prefix = new string('n', 128);
+        var inventory = new DmFileInventory(Enumerable.Range(0, 32).Select(i => prefix + i.ToString("D2") + "/entry.txt"));
+        var project = CompiledProject.Load(artifact);
+        var limited = new DmRuntime(project, inventory) { InstructionBudget = 64 }; limited.Boot();
+        limited.InvokeGlobal("test_file_snapshot", new DmValue(""));
+        Throws(() => limited.InvokeGlobal("test_file_snapshot", new DmValue(prefix + "31/entry.txt")), "path work budget");
+        Check(limited.GetGlobal("file_snapshot_result").Number == 1, "Failed lookup overwrote prior root result.");
+        var normal = new DmRuntime(project, inventory); normal.Boot();
+        foreach (var path in new[] { prefix + "31/entry.txt", prefix + "31", prefix + "31/" }) {
+            normal.InvokeGlobal("test_file_snapshot", new DmValue(path));
+            Check(normal.GetGlobal("file_snapshot_result").Number == 1, "Adequate-budget exact file/directory lookup failed.");
+        }
+        normal.InvokeGlobal("test_file_snapshot", new DmValue(prefix + "32"));
+        Check(normal.GetGlobal("file_snapshot_result").Number == 0, "Shared prefix was confused with a directory.");
+    }));
+    tests.Add(($"file snapshot compiled resource provenance and names-only capability: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact), new DmFileInventory(["semantics.dm", "config/empty.txt", "config/names/list.txt"])); runtime.Boot();
+        runtime.InvokeGlobal("test_file_snapshot", new DmValue("config/empty.txt"));
+        Check(runtime.GetGlobal("file_snapshot_result").Number == 1, "Presence must not depend on file contents or size.");
+        runtime.InvokeGlobal("test_file_snapshot_literal");
+        Check(runtime.GetGlobal("file_snapshot_result").IsNull, "Compiled embedded resource was treated as a filesystem reference.");
+        runtime.InvokeGlobal("test_file_snapshot_omitted");
+        Check(runtime.GetGlobal("file_snapshot_result").IsNull, "Omitted fexists argument must return null.");
+        runtime.InvokeGlobal("test_file_snapshot", new DmValue("config/names/list.txt"));
+        Throws(() => runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("config/names/list.txt")), "file2text");
+        Check(runtime.GetGlobal("file_snapshot_result").Number == 1, "Names-only content refusal overwrote previous output.");
+        Throws(() => runtime.InvokeGlobal("test_file_snapshot_file", new DmValue("config/names/list.txt")), "file");
+        Check(runtime.GetGlobal("file_snapshot_result").Number == 1, "Unsupported file reference construction overwrote previous output.");
+    }));
+    tests.Add(($"executable fexists body is not replaced by native interception: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var proc = json["Procs"]!.AsArray().First(p => p!["Name"]!.GetValue<string>() == "fexists")!;
+        var bytes = new List<byte> { (byte)DreamProcOpcode.ReturnFloat };
+        bytes.AddRange(BitConverter.GetBytes(7f)); proc["Bytecode"] = Convert.ToBase64String(bytes.ToArray());
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        runtime.InvokeGlobal("test_file_snapshot", new DmValue("../rejected-by-native"));
+        Check(runtime.GetGlobal("file_snapshot_result").Number == 7, "Executable native-name body intercepted.");
+    }));
+}
+tests.Add(("file inventory ingestion rejects duplicates, unsafe entries and bounded growth", () => {
+    Throws(() => new DmFileInventory(["x", "x"]), "Duplicate");
+    var prefix = string.Concat(Enumerable.Repeat("a/", 500));
+    Throws(() => new DmFileInventory(Enumerable.Range(0, 1000).Select(i => prefix + i), ["blocked"]), "prefix work");
+    Throws(() => new DmFileInventory([""]), "Empty");
+    Throws(() => new DmFileInventory(["dir/"]), "path component");
+    Throws(() => new DmFileInventory(["x/file"], ["x"]), "Contradictory");
+    Throws(() => new DmFileInventory(["x", "x/file"]), "Contradictory");
+    Throws(() => new DmFileInventory(["x"], ["x/file"]), "Contradictory");
+    Throws(() => new DmFileInventory([], ["x", "x/file"]), "Contradictory");
+    Throws(() => new DmFileInventory(["x"], ["x"]), "Duplicate");
+    Throws(() => new DmFileInventory(Enumerable.Range(0, 100001).Select(i => "f" + i)), "count limit");
+    Throws(() => new DmFileInventory(Enumerable.Range(0, 5000).Select(i => new string('x', 4000) + i)), "byte limit");
+}));
+
+
+tests.Add(("file snapshot never falls back to a real current-directory file", () => {
+    var project = CompiledProject.Load(semanticsPath);
+    var originalDirectory = Directory.GetCurrentDirectory();
+    var fixtureDirectory = Path.Combine(Path.GetTempPath(), "dm-file-snapshot-" + Guid.NewGuid());
+    Directory.CreateDirectory(fixtureDirectory);
+    try {
+        File.WriteAllText(Path.Combine(fixtureDirectory, "decoy.txt"), "isolated test fixture");
+        Directory.SetCurrentDirectory(fixtureDirectory);
+        var configured = new DmRuntime(project, new DmFileInventory([])); configured.Boot();
+        configured.InvokeGlobal("test_file_snapshot", new DmValue("decoy.txt"));
+        Check(configured.GetGlobal("file_snapshot_result").Number == 0, "Snapshot consulted ambient cwd.");
+        var unconfigured = new DmRuntime(project); unconfigured.Boot();
+        Throws(() => unconfigured.InvokeGlobal("test_file_snapshot", new DmValue("decoy.txt")), "explicitly configured");
+    } finally {
+        Directory.SetCurrentDirectory(originalDirectory);
+        Directory.Delete(fixtureDirectory, recursive: true);
+    }
+}));
+
 var failed = 0;
 foreach (var (name, run) in tests) {
     try { run(); Console.WriteLine($"PASS {name}"); }

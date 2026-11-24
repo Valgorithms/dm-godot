@@ -1172,6 +1172,262 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
     }));
 }
 
+
+foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
+    DmList EnumList(params DmValue[] values) { var list = new DmList(); list.Values.AddRange(values); return list; }
+    tests.Add(($"enumeration preserves duplicates/null, keys and terminal null assignment: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        var list = EnumList(1, DmValue.Null, 1);
+        runtime.InvokeGlobal("test_enum", new DmValue(list));
+        Check(runtime.GetGlobal("enum_count").Number == 3 && runtime.GetGlobal("enum_last").IsNull &&
+            runtime.Logs.Select(x => x.Text).SequenceEqual(new[] { "value=1", "value=", "value=1" }), "Positional snapshot/exhaustion changed.");
+        var keyed = EnumList("key", "key", "plain");
+        keyed.Associations["key"] = 99;
+        runtime.InvokeGlobal("test_enum", new DmValue(keyed));
+        Check(runtime.Logs.TakeLast(3).Select(x => x.Text).SequenceEqual(new[] { "value=key", "value=key", "value=plain" }),
+            "Unfiltered enumeration must yield keys, not associated values.");
+        foreach (var value in new DmValue[] { DmValue.Null, 5, "text", new(new DmTypeReference(0, "/")), new(new DmResource("unused")), new(new DmObject(0, "/")) }) {
+            runtime.InvokeGlobal("test_enum", value);
+            Check(runtime.GetGlobal("enum_count").Number == 0 && runtime.GetGlobal("enum_last").IsNull, "Ignored container did not create empty enumeration.");
+        }
+    }));
+    tests.Add(($"enumeration snapshot survives source mutation and sleep with shallow references: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        var nested = EnumList(2);
+        var source = EnumList(1, new(nested), 3);
+        runtime.InvokeGlobal("test_enum_capture", new DmValue(source));
+        Check(runtime.GetGlobal("enum_last").Number == 1 && runtime.PendingThreads == 1, "First enumeration suspension failed.");
+        source.Values.Clear(); source.Values.Add(99); source.Associations["new"] = 100;
+        nested.Values[0] = 7;
+        runtime.AdvanceBy(1);
+        Check(ReferenceEquals(runtime.GetGlobal("enum_last").Value, nested) && nested.Values[0].Number == 7,
+            "Snapshot did not retain shallow nested reference.");
+        runtime.AdvanceBy(1);
+        Check(runtime.GetGlobal("enum_last").Number == 3 && runtime.GetGlobal("enum_count").Number == 3, "Mutation replaced remaining snapshot values.");
+        runtime.AdvanceBy(1);
+        Check(runtime.PendingThreads == 0 && source.Values[0].Number == 99, "Enumeration leaked thread or mutated input.");
+    }));
+    tests.Add(($"enumeration break/continue/return and callee slots remain independent: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        var source = new DmValue(EnumList(1, 2, 3));
+        runtime.InvokeGlobal("test_enum_break", source);
+        Check(runtime.GetGlobal("enum_last").Number == 2, "Break incorrectly exhausted/reset the current item.");
+        runtime.InvokeGlobal("test_enum_continue", source);
+        Check(runtime.Logs.TakeLast(2).Select(x => x.Text).SequenceEqual(new[] { "continue=1", "continue=3" }), "Continue recreated or lost cursor.");
+        runtime.InvokeGlobal("test_enum_early", source);
+        runtime.InvokeGlobal("test_enum_early", new DmValue(EnumList(8)));
+        Check(runtime.GetGlobal("enum_last").Number == 8 && runtime.PendingThreads == 0, "Early return reused a prior frame cursor.");
+        runtime.InvokeGlobal("test_enum_nested", new DmValue(EnumList(1, 2)));
+        Check(runtime.Logs.TakeLast(6).Select(x => x.Text).SequenceEqual(new[] {
+            "outer=1", "inner=1", "inner=2", "outer=2", "inner=1", "inner=2"
+        }), "Callee enumerators changed caller cursor.");
+        runtime.InvokeGlobal("test_enum_nested_same", new DmValue(EnumList(1, 2)));
+        Check(runtime.Logs.TakeLast(4).Select(x => x.Text).SequenceEqual(new[] { "1:1", "1:2", "2:1", "2:2" }),
+            "Nested loops in one frame shared a slot.");
+    }));
+    tests.Add(($"enumeration spawn captures locals and waitfor detachment preserves cursor: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        runtime.InvokeGlobal("test_enum_spawn", new DmValue(EnumList(1, 2)));
+        Check(runtime.Logs.Select(x => x.Text).SequenceEqual(new[] { "parent=1", "parent=2", "spawn=1", "spawn=2" }),
+            "Spawn changed parent cursor or copied local values incorrectly.");
+        runtime.InvokeGlobal("test_enum_detached", new DmValue(EnumList(3, 4)));
+        Check(runtime.Logs.TakeLast(2).Select(x => x.Text).SequenceEqual(new[] { "detached=3", "caller" }), "waitfor caller did not resume.");
+        runtime.AdvanceBy(1);
+        Check(runtime.Logs[^1].Text == "detached=4", "Detached frame lost enumerator cursor.");
+        runtime.AdvanceBy(1);
+        Check(runtime.PendingThreads == 0, "Detached enumerator frame leaked.");
+    }));
+    tests.Add(($"enumeration guards unsupported native/strict containers and invalid identities: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        Throws(() => runtime.InvokeGlobal("test_enum", new DmValue(new DmAssocList())), "Strict associative list enumeration");
+        Throws(() => runtime.InvokeGlobal("test_enum", new DmValue(runtime.World)), "Native atom/world contents");
+        Throws(() => runtime.InvokeGlobal("test_enum", new DmValue(new DmObject(TypeId(json, "/atom"), "/atom"))), "Native atom/world contents");
+        Throws(() => runtime.InvokeGlobal("test_enum", new DmValue(new DmObject(-1, "/invalid"))), "invalid object type identity");
+        Throws(() => runtime.InvokeGlobal("test_enum", new DmValue(new object())), "operand representation");
+        Throws(() => runtime.InvokeGlobal("test_enum_filtered", new DmValue(EnumList())), "CreateFilteredListEnumerator");
+    }));
+
+    tests.Add(($"enumeration charges actual datum ancestry without inspecting long path text: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var definitions = json["Types"]!.AsArray(); var parent = TypeId(json, "/datum");
+        for (var i = 0; i < 80; i++) {
+            var id = definitions.Count;
+            definitions.Add(new JsonObject { ["Path"] = "/datum/enumeration_depth_" + i, ["Parent"] = parent });
+            parent = id;
+        }
+        var path = definitions[parent]!["Path"]!.GetValue<string>();
+        var datum = new DmObject(parent, path); datum.Variables["untouched"] = 7;
+        var project = CompiledProject.Parse(json.ToJsonString());
+        var limited = new DmRuntime(project) { InstructionBudget = 64 }; limited.Boot();
+        limited.InvokeGlobal("test_enum_early", new DmValue(EnumList(7)));
+        Throws(() => limited.InvokeGlobal("test_enum", new DmValue(datum)), "Instruction budget exhausted during list enumeration");
+        Check(limited.GetGlobal("enum_last").Number == 7 && datum.Variables["untouched"].Number == 7 && limited.Logs.Count == 0 && limited.PendingThreads == 0,
+            "Ancestry failure iterated, mutated its container, or published terminal assignment.");
+        var normal = new DmRuntime(project) { InstructionBudget = 10_000 }; normal.Boot();
+        normal.InvokeGlobal("test_enum", new DmValue(datum));
+        Check(normal.GetGlobal("enum_count").Number == 0 && normal.GetGlobal("enum_last").IsNull && normal.PendingThreads == 0,
+            "An ordinary datum must remain an empty iterable with enough ancestry budget.");
+        var longId = definitions.Count; var longPath = "/datum/" + new string('x', 4096) + "_😀";
+        definitions.Add(new JsonObject { ["Path"] = longPath, ["Parent"] = TypeId(json, "/datum") });
+        var shortWalk = new DmRuntime(CompiledProject.Parse(json.ToJsonString())) { InstructionBudget = 64 }; shortWalk.Boot();
+        shortWalk.InvokeGlobal("test_enum", new DmValue(new DmObject(longId, longPath)));
+        Check(shortWalk.GetGlobal("enum_count").Number == 0 && shortWalk.GetGlobal("enum_last").IsNull,
+            "Fixed native-name checks should skip unequal-length text without scanning or imposing a path-length cap.");
+    }));
+    tests.Add(($"enumeration guards native families by actual parent edges and object representation: {artifact}", () => {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!; var definitions = json["Types"]!.AsArray();
+        var children = new List<(int Id, string Path)>();
+        foreach (var family in new[] { "/atom", "/world", "/list", "/alist" }) {
+            var path = "/datum/disguised_" + family[1..]; var id = definitions.Count;
+            definitions.Add(new JsonObject { ["Path"] = path, ["Parent"] = TypeId(json, family) }); children.Add((id, path));
+        }
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())); runtime.Boot();
+        foreach (var child in children) {
+            var instance = new DmObject(child.Id, child.Path);
+            Throws(() => runtime.InvokeGlobal("test_enum", new DmValue(instance)), "enumeration is not implemented");
+            Check(runtime.PendingThreads == 0, "Unsupported native-family container retained a thread.");
+        }
+        runtime.InvokeGlobal("test_enum", new DmValue(EnumList(3)));
+        Check(runtime.GetGlobal("enum_count").Number == 1, "Native container guards rejected ordinary DmList representation.");
+    }));
+    tests.Add(($"enumeration validates positional host values shallowly before publishing a snapshot: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
+        var hostile = new SubtractionHostValue(); var source = EnumList(1, new DmValue(hostile));
+        runtime.InvokeGlobal("test_enum_early", new DmValue(EnumList(7)));
+        hostile.EqualityCalls = hostile.HashCalls = 0;
+        Throws(() => runtime.InvokeGlobal("test_enum_capture", new DmValue(source)), "representation");
+        Check(hostile.EqualityCalls == 0 && hostile.HashCalls == 0 && source.Values.Count == 2 &&
+            ReferenceEquals(source.Values[1].Value, hostile) && runtime.GetGlobal("enum_last").Number == 7 && runtime.PendingThreads == 0,
+            "Unsupported positional value ran host callbacks, changed input, or published a partial snapshot.");
+        var nested = EnumList(new DmValue(hostile)); var outer = EnumList(new DmValue(nested));
+        // Keys and associated values are irrelevant to unfiltered positional snapshots.
+        outer.Associations[new DmValue(hostile)] = new DmValue(hostile);
+        hostile.EqualityCalls = hostile.HashCalls = 0;
+        runtime.InvokeGlobal("test_enum_capture", new DmValue(outer));
+        Check(ReferenceEquals(runtime.GetGlobal("enum_last").Value, nested) && runtime.PendingThreads == 1 &&
+            hostile.EqualityCalls == 0 && hostile.HashCalls == 0, "Snapshot validation recursed into nested lists or inspected ignored associations.");
+        runtime.AdvanceBy(1);
+        Check(runtime.PendingThreads == 0 && ReferenceEquals(nested.Values[0].Value, hostile), "Shallow snapshot changed nested contents or leaked its frame.");
+    }));
+
+    // Explicit wire cases cover compiler optimization/lifetime paths without
+    // pretending malformed bytecode is normal source output.
+    var enumJson = JsonNode.Parse(File.ReadAllText(artifact))!;
+    var enumGlobal = Array.FindIndex(enumJson["Globals"]!["Names"]!.AsArray().Select(n => n!.GetValue<string>()).ToArray(), n => n == "enum_last");
+    DmRuntime EnumWire(List<byte> code, int budget = 1_000_000) {
+        var json = enumJson.DeepClone();
+        var proc = json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "test_enum_wire")!;
+        proc["Bytecode"] = Convert.ToBase64String(code.ToArray()); proc["SourceInfo"] = new JsonArray();
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString())) { InstructionBudget = budget };
+        runtime.Boot(); return runtime;
+    }
+    void EInt(List<byte> code, int value) => code.AddRange(BitConverter.GetBytes(value));
+    void EOp(List<byte> code, DreamProcOpcode opcode) => code.Add((byte)opcode);
+    void ESet(List<byte> code, float value) {
+        EOp(code, DreamProcOpcode.PushFloat); code.AddRange(BitConverter.GetBytes(value));
+        EOp(code, DreamProcOpcode.AssignNoPush); code.Add(10); EInt(code, enumGlobal);
+    }
+    void EEnd(List<byte> code) { EOp(code, DreamProcOpcode.PushNull); EOp(code, DreamProcOpcode.Return); }
+    void ECreate(List<byte> code, int id) {
+        EOp(code, DreamProcOpcode.PushReferenceValue); code.AddRange(new byte[] { 8, 0 });
+        EOp(code, DreamProcOpcode.CreateListEnumerator); EInt(code, id);
+    }
+    int EEnumerate(List<byte> code, int id, bool assign = true, byte reference = 10) {
+        EOp(code, assign ? DreamProcOpcode.Enumerate : DreamProcOpcode.EnumerateNoAssign); EInt(code, id);
+        if (assign) { code.Add(reference); if (reference == 10) EInt(code, enumGlobal); }
+        var patch = code.Count; EInt(code, 0); return patch;
+    }
+    void EPatch(List<byte> code, int patch, int target) {
+        var bytes = BitConverter.GetBytes(target);
+        for (var i = 0; i < 4; i++) code[patch + i] = bytes[i];
+    }
+    foreach (var mode in new[] { "missing", "empty", "destroyed" })
+        tests.Add(($"enumeration {mode} slot preserves pinned terminal assignment: {artifact}", () => {
+            var code = new List<byte>(); ESet(code, 99);
+            if (mode != "missing") ECreate(code, 0);
+            if (mode == "destroyed") {
+                EOp(code, DreamProcOpcode.DestroyEnumerator); EInt(code, 0);
+                EOp(code, DreamProcOpcode.DestroyEnumerator); EInt(code, 0);
+            }
+            var jump = EEnumerate(code, 0); ESet(code, 777);
+            EPatch(code, jump, code.Count); EEnd(code);
+            var runtime = EnumWire(code); runtime.InvokeGlobal("test_enum_wire", DmValue.Null);
+            Check(mode == "empty" ? runtime.GetGlobal("enum_last").IsNull : runtime.GetGlobal("enum_last").Number == 99,
+                "Missing slot/exhausted snapshot distinction changed.");
+        }));
+    tests.Add(($"enumeration exhaustion assigns through guarded references before failure jump: {artifact}", () => {
+        var code = new List<byte>(); ECreate(code, 0);
+        var jump = EEnumerate(code, 0, reference: 5); EPatch(code, jump, code.Count); EEnd(code);
+        var runtime = EnumWire(code);
+        Throws(() => runtime.InvokeGlobal("test_enum_wire", DmValue.Null), "Write reference kind 5");
+    }));
+    tests.Add(($"EnumerateNoAssign advances to exhaustion without writing: {artifact}", () => {
+        var code = new List<byte>(); ESet(code, 0); ECreate(code, 15);
+        var jumps = new List<int>();
+        for (var i = 1; i <= 3; i++) { jumps.Add(EEnumerate(code, 15, assign: false)); ESet(code, i); }
+        foreach (var jump in jumps) EPatch(code, jump, code.Count);
+        EEnd(code);
+        var runtime = EnumWire(code); runtime.InvokeGlobal("test_enum_wire", new DmValue(EnumList(1, 2)));
+        Check(runtime.GetGlobal("enum_last").Number == 2, "NoAssign did not advance cursor or use slot 15.");
+    }));
+    tests.Add(($"spawned frame starts with empty enumerator slots: {artifact}", () => {
+        var code = new List<byte>(); ESet(code, 99); ECreate(code, 0);
+        EOp(code, DreamProcOpcode.PushFloat); code.AddRange(BitConverter.GetBytes(0f));
+        EOp(code, DreamProcOpcode.Spawn); var parentJump = code.Count; EInt(code, 0);
+        var childJump = EEnumerate(code, 0); ESet(code, 777);
+        EPatch(code, childJump, code.Count); EEnd(code);
+        EPatch(code, parentJump, code.Count); EEnd(code);
+        var runtime = EnumWire(code); runtime.InvokeGlobal("test_enum_wire", new DmValue(EnumList(1)));
+        Check(runtime.GetGlobal("enum_last").Number == 99 && runtime.PendingThreads == 0, "Spawn inherited/shared the parent's active enumerator.");
+    }));
+    foreach (var id in new[] { -1, 16 })
+        foreach (var opcode in new[] { DreamProcOpcode.CreateListEnumerator, DreamProcOpcode.DestroyEnumerator, DreamProcOpcode.Enumerate, DreamProcOpcode.EnumerateNoAssign })
+            tests.Add(($"enumeration rejects {opcode} slot {id}: {artifact}", () => {
+                var code = new List<byte>();
+                if (opcode == DreamProcOpcode.CreateListEnumerator) ECreate(code, id);
+                else if (opcode is DreamProcOpcode.Enumerate or DreamProcOpcode.EnumerateNoAssign) {
+                    var jump = EEnumerate(code, id, opcode == DreamProcOpcode.Enumerate); EPatch(code, jump, code.Count);
+                } else { EOp(code, opcode); EInt(code, id); }
+                EEnd(code);
+                var runtime = EnumWire(code);
+                Throws(() => runtime.InvokeGlobal("test_enum_wire", DmValue.Null), "slot must be in 0..15");
+            }));
+
+    tests.Add(($"unsupported associative/type/range enumerators remain guarded: {artifact}", () => {
+        foreach (var opcode in new[] { DreamProcOpcode.EnumerateAssoc, DreamProcOpcode.CreateTypeEnumerator, DreamProcOpcode.CreateRangeEnumerator }) {
+            var code = new List<byte>(); EOp(code, opcode); EInt(code, 0);
+            if (opcode == DreamProcOpcode.EnumerateAssoc) {
+                code.Add(10); EInt(code, enumGlobal); code.Add(10); EInt(code, enumGlobal);
+                var jump = code.Count; EInt(code, 0); EPatch(code, jump, code.Count);
+            }
+            EEnd(code);
+            var runtime = EnumWire(code);
+            Throws(() => runtime.InvokeGlobal("test_enum_wire", DmValue.Null), $"Opcode {opcode}");
+        }
+    }));
+    tests.Add(($"enumerator failure jumps require instruction boundaries: {artifact}", () => {
+        var code = new List<byte>(); ECreate(code, 0);
+        var jump = EEnumerate(code, 0); EPatch(code, jump, 1); EEnd(code);
+        Throws(() => EnumWire(code), "instruction boundary");
+    }));
+    tests.Add(($"snapshot allocations aggregate and copy work is bounded: {artifact}", () => {
+        var code = new List<byte>(); ECreate(code, 0); ECreate(code, 1); EEnd(code);
+        var runtime = EnumWire(code);
+        var source = EnumList(Enumerable.Repeat(new DmValue(1f), 60_000).ToArray());
+        Throws(() => runtime.InvokeGlobal("test_enum_wire", new DmValue(source)), "List allocation budget");
+        Check(source.Values.Count == 60_000 && runtime.GetGlobal("enum_last").IsNull, "Failed snapshot changed input or ran body.");
+        code = []; ECreate(code, 0); EEnd(code);
+        var cheap = EnumWire(code, 250);
+        Throws(() => cheap.InvokeGlobal("test_enum_wire", new DmValue(source)), "Instruction budget exhausted during list enumeration snapshot");
+        var boundary = EnumWire(code);
+        boundary.InvokeGlobal("test_enum_wire", new DmValue(EnumList(Enumerable.Repeat(new DmValue(1f), 99_999).ToArray())));
+        Throws(() => boundary.InvokeGlobal("test_enum_wire", new DmValue(EnumList(Enumerable.Repeat(new DmValue(1f), 100_000).ToArray()))), "List allocation budget");
+        boundary.InvokeGlobal("test_enum_wire", new DmValue(EnumList(1)));
+        Check(boundary.PendingThreads == 0, "Snapshot public-boundary reset failed.");
+    }));
+}
+
 var movableInitPath = args.Length > 7 ? args[7] : "build/movable-init.json";
 var movableInitOptimizedPath = args.Length > 8 ? args[8] : "build/movable-init-optimized.json";
 foreach (var artifact in new[] { movableInitPath, movableInitOptimizedPath }) {

@@ -296,3 +296,40 @@ without invoking Equals. This conservative bound may stop association-heavy
 operations earlier even with well-distributed hashes. Positional-only subtraction
 has no dictionary indexing or such charge. The scratch cap is per operation; the
 existing output allocation allowance remains cumulative per public boundary.
+
+Unfiltered ordinary-list loops support CreateListEnumerator, Enumerate,
+EnumerateNoAssign and DestroyEnumerator with the pinned 16 frame-local slots.
+Iteration snapshots positional values/keys in order, preserving duplicates, nulls
+and shallow references. Later source-list mutation does not replace snapshot entries.
+Primitive/null/type/resource and ordinary datum containers create empty snapshots;
+atom/world contents and strict associative list containers remain explicit errors.
+Filtered, associative, type and range enumeration are still unsupported; association
+values are not copied for this values-only subset.
+
+An exhausted present snapshot assigns null through the normal guarded reference
+path before jumping. An absent/destroyed slot jumps without assigning; destroying
+an empty slot is a no-op, matching the pin. Calls own separate slots; sleep and
+waitfor detachment retain the same frame cursor. Spawn starts with empty slots
+while preserving its existing copied locals/arguments. Return releases the frame;
+Destroy clears its slot. No extra jump-based cleanup is invented.
+Snapshots charge one object plus positional entries against the cumulative
+allocation budget before copying. Shallow positional representation validation and
+copying each consume one work unit per entry; unsupported host-only values reject
+before publishing a snapshot, without invoking their equality or formatting code.
+Nested list/object references are retained, not recursively inspected. Object-container
+classification consumes one work unit per actual Parent link, with fixed-length
+ordinal native-path checks; forged native list/alist object wrappers reject explicitly.
+Each enumeration opcode consumes its normal instruction allowance. Slot IDs outside
+0..15 and malformed jump targets are rejected.
+These contracts follow pinned
+[DMOpcodeHandlers](https://github.com/OpenDreamProject/OpenDream/blob/846775a06b8fa4639772cb3e759adcc0133d9711/OpenDreamRuntime/Procs/DMOpcodeHandlers.cs)
+GetContentsEnumerator/CreateListEnumerator/Enumerate/DestroyEnumerator,
+DreamEnumerators' array cursor, and DMProc's spawn-state copy constructor.
+
+The supported non-world mutation snapshot and positional-key iteration also follow
+the [BYOND DM Reference for list loops](https://www.byond.com/docs/ref/#/proc/for/list).
+This is source/documentation evidence, not a native-engine execution result; native
+world/atom contents, filtered and key/value loops remain outside this slice.
+Sleeping frames intentionally retain their snapshots. These per-public-execution
+work/allocation limits do not establish a global retained-heap cap, and this slice
+does not add object deletion or BYOND reference-count lifecycle compatibility.

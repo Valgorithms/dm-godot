@@ -576,6 +576,33 @@ public sealed class DmRuntime {
                         PushFrame(fiber, new Frame(proc, instance, args) { Usr = frame.Usr });
                         break;
                     }
+
+                    case DreamProcOpcode.CreateListEnumerator: {
+                        var id = ReadEnumeratorId(frame);
+                        frame.Enumerators[id] = CreateListSnapshot(frame.Pop());
+                        break;
+                    }
+                    case DreamProcOpcode.Enumerate: {
+                        var id = ReadEnumeratorId(frame);
+                        var reference = frame.Reader.Reference();
+                        var failure = frame.Reader.Int();
+                        var enumerator = frame.Enumerators[id];
+                        if (enumerator is null) { frame.Reader.Position = failure; break; }
+                        var success = enumerator.Next(out var value);
+                        Set(frame, reference, value); // Exhaustion assigns null before jumping.
+                        if (!success) frame.Reader.Position = failure;
+                        break;
+                    }
+                    case DreamProcOpcode.EnumerateNoAssign: {
+                        var id = ReadEnumeratorId(frame);
+                        var failure = frame.Reader.Int();
+                        if (frame.Enumerators[id] is not { } enumerator || !enumerator.Next(out _))
+                            frame.Reader.Position = failure;
+                        break;
+                    }
+                    case DreamProcOpcode.DestroyEnumerator:
+                        frame.Enumerators[ReadEnumeratorId(frame)] = null;
+                        break;
                     case DreamProcOpcode.LocateCoord: {
                         var z = frame.Pop(); var y = frame.Pop(); var x = frame.Pop();
                         frame.Push(LocateCoordinates(x, y, z));
@@ -727,7 +754,56 @@ public sealed class DmRuntime {
         }
     }
 
+    private static int ReadEnumeratorId(Frame frame) {
+        var id = frame.Reader.Int();
+        if (id < 0 || id >= 16)
+            throw new CompatibilityException("List enumerator slot must be in 0..15.");
+        return id;
+    }
 
+    private ListSnapshot CreateListSnapshot(DmValue container) {
+        void Work(int count) {
+            if (count < 0 || count > _budget)
+                throw new CompatibilityException("Instruction budget exhausted during list enumeration snapshot.");
+            _budget -= count;
+        }
+        DmList? list = null;
+        switch (container.Value) {
+            case DmList ordinary: list = ordinary; break;
+            case DmAssocList:
+                throw new CompatibilityException("Strict associative list enumeration is not implemented.");
+            case DmObject instance:
+                if (instance.TypeId < 0 || instance.TypeId >= Data.Types.Length)
+                    throw new CompatibilityException("List enumeration has invalid object type identity.");
+                for (int? id = instance.TypeId; id.HasValue; id = Data.Types[id.Value].Parent) {
+                    Work(1);
+                    // Fixed-length ordinal comparisons bound path work even for long metadata paths.
+                    var path = Data.Types[id.Value].Path;
+                    if (string.Equals(path, "/atom", StringComparison.Ordinal) ||
+                        string.Equals(path, "/world", StringComparison.Ordinal))
+                        throw new CompatibilityException("Native atom/world contents enumeration is not implemented.");
+                    if (string.Equals(path, "/list", StringComparison.Ordinal) ||
+                        string.Equals(path, "/alist", StringComparison.Ordinal))
+                        throw new CompatibilityException("Native list object representation enumeration is not implemented.");
+                }
+                break; // Ordinary datum containers enumerate no values in the pin.
+            case null or float or string or DmTypeReference or DmResource: break;
+            default: throw new CompatibilityException("List enumeration operand representation is not implemented.");
+        }
+        var count = list?.Values.Count ?? 0;
+        Work(count);
+        if (list is not null) {
+            foreach (var value in list.Values) {
+                if (value.Value is not (null or float or string or DmTypeReference or DmResource or DmObject or DmList or DmAssocList))
+                    throw new CompatibilityException("List enumeration value representation is not implemented.");
+            }
+        }
+        Work(count);
+        ChargeListAllocation(1L + count);
+        // Only unfiltered key iteration is supported. Associative enumeration is
+        // still rejected, so no association-value snapshot is exposed here.
+        return new ListSnapshot(list?.Values.ToArray() ?? []);
+    }
 
     private DmValue Subtract(DmValue left, DmValue right) {
         if (left.Value is DmAssocList)
@@ -1117,6 +1193,15 @@ public sealed class DmRuntime {
         public Procedure? Constructor { get; } = constructor;
         public int Stage;
     }
+
+    private sealed class ListSnapshot(DmValue[] values) {
+        private int _position;
+        public bool Next(out DmValue value) {
+            if (_position < values.Length) { value = values[_position++]; return true; }
+            value = DmValue.Null;
+            return false;
+        }
+    }
     private sealed class Frame {
         public Construction? Construction;
         public Procedure Proc { get; }
@@ -1127,12 +1212,14 @@ public sealed class DmRuntime {
         public DmValue[] Arguments;
         public DmValue[] Locals;
         public List<DmValue> Stack { get; } = [];
+        public ListSnapshot?[] Enumerators { get; } = new ListSnapshot?[16];
         public Frame(Procedure proc, DmObject? src, DmValue[] args) {
             Proc = proc; Reader = new(proc.Bytecode ?? []); Src = src; Arguments = [.. args]; Locals = new DmValue[Math.Max(256, proc.MaxVariableId + 1)];
         }
         public void Push(DmValue value) => Stack.Add(value);
         public DmValue Pop() { if (Stack.Count == 0) throw new CompatibilityException("DM evaluation stack underflow."); var result = Stack[^1]; Stack.RemoveAt(Stack.Count - 1); return result; }
         public DmValue[] PopMany(int count) { if (count < 0 || count > Stack.Count) throw new CompatibilityException("Invalid DM stack argument count."); var result = Stack.GetRange(Stack.Count - count, count).ToArray(); Stack.RemoveRange(Stack.Count - count, count); return result; }
+        // Pinned spawn copies locals/arguments but starts with empty enumerator slots.
         public Frame Clone() { var frame = new Frame(Proc, Src, Arguments) { Usr = Usr, Result = Result, Locals = [.. Locals] }; frame.Reader.Position = Reader.Position; frame.Stack.AddRange(Stack); return frame; }
     }
 }

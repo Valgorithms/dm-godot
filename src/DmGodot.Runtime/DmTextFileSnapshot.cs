@@ -61,13 +61,17 @@ public sealed class DmTextFileSnapshot {
             if (bom) throw new CompatibilityException("Text snapshot encoding is not supported.");
             for (var i = 0; i < bytes.Length; i++) {
                 if (bytes[i] < 128) continue;
-                if (i == 0 || i + 1 >= bytes.Length || !AsciiLetter(bytes[i - 1]) || !AsciiLetter(bytes[i + 1]))
+                if (!IsSupportedLatin1Byte(bytes, i))
                     throw new CompatibilityException("Text snapshot encoding is not supported.");
             }
             text = Encoding.Latin1.GetString(bytes);
         }
         return text.Replace("\r", "", StringComparison.Ordinal);
     }
+    // BYOND 516.1688 maps 0x80..0xFE before LF to Latin-1. Its 0xFF result differs.
+    private static bool IsSupportedLatin1Byte(ReadOnlySpan<byte> bytes, int i) =>
+        i > 0 && i + 1 < bytes.Length && AsciiLetter(bytes[i - 1]) &&
+        (AsciiLetter(bytes[i + 1]) || (bytes[i] != 0xff && bytes[i + 1] == (byte)'\n'));
     private static bool AsciiLetter(byte value) => value is >= (byte)'A' and <= (byte)'Z' or >= (byte)'a' and <= (byte)'z';
 
     public string? ReadText(string path) => ReadText(path, static _ => { });

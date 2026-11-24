@@ -436,16 +436,18 @@ refresh, or packed-resource content store is implemented.
 Decoding follows bounded BYOND 516.1688 byte-fixture evidence, not the incompatible
 OpenDream replacement-decoder behavior: truncate at the first NUL byte, remove a
 leading UTF-8 BOM, decode strict valid UTF-8, and remove all carriage returns.
-If UTF-8 decoding fails, the only supported legacy subset requires every high byte
-to stand alone between ASCII letters, and no leading UTF-8 BOM; these bytes map to
-same-valued Latin-1 code points. Adjacent/mixed/terminal malformed byte patterns
-reject explicitly. This is not a general encoding detector or an unrestricted
-Latin-1 fallback. Native digest-only fixtures confirmed all 128 isolated high-byte
-values and the exact approved names file. No mutable input byte arrays are retained.
+If strict UTF-8 decoding fails without a leading UTF-8 BOM, the supported Latin-1
+subset requires each high byte to follow an ASCII letter and precede either another
+ASCII letter or LF. Before LF, the supported range is 0x80 through 0xFE. BYOND
+preserved the raw 0xFF byte at that boundary. The decoder checks the original
+bytes before removing carriage returns. Other malformed sequences raise a compatibility error, including adjacent
+high bytes, high bytes at EOF and high bytes immediately before CRLF. BYOND
+516.1688 fixtures cover all 128 high-byte values in both positions and the
+complete contents of both approved name files.
 
-Only `config/names/first_male.txt` from the pinned public Civ13 source is approved
-in `compatibility/civ13-text-allowlist.json` for the target probe. Its exact regular Git
-blob ID, byte length and SHA-256 are checked independently against that allowlist.
+The target probe grants `config/names/first_male.txt` and `config/names/first_female.txt`
+from the pinned public Civ13 source. Each regular Git blob ID, byte length and SHA-256
+must match `compatibility/civ13-text-allowlist.json`.
 Producer reads immutable Git object IDs with replacement objects disabled; it never
 uses worktree file contents. The content manifest is bound to source commit/tree,
 compiled artifact and separately supplied allowlist hash. Source licensing remains

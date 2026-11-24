@@ -71,7 +71,9 @@ public sealed class DmObject {
 /// <summary>Ordered list entries plus associative keys, distinct from a host dictionary.</summary>
 public sealed class DmList {
     public List<DmValue> Values { get; } = [];
-    public Dictionary<DmValue, DmValue> Associations { get; } = [];
+    public Dictionary<DmValue, DmValue> Associations { get; }
+    public DmList() { Associations = []; }
+    internal DmList(IEqualityComparer<DmValue> comparer) { Associations = new(comparer); }
     public DmValue Get(DmValue index) {
         if (index.Value is float n) {
             return Values[NumericIndex(n)];

@@ -48,6 +48,7 @@ class HostTests(unittest.TestCase):
         hidden = project["Maps"][0]["CellDefinitions"]["c"]["Objects"][0]
         self.assertEqual(project["Types"][hidden["Type"]]["Path"], "/mob/player")
         self.assertEqual(hidden["VarOverrides"]["invisibility"], 100)
+        self.assertEqual(hidden["VarOverrides"]["desc"], "<i>survey marker</i>")
         first = self.connect()
         first_state = first.join("First")
         self.assertEqual(position(first_state, first.id), (2, 2, 1))

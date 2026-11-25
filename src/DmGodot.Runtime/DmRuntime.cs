@@ -308,10 +308,17 @@ public sealed partial class DmRuntime {
     private DmValue ConvertValue(JsonElement value) => value.ValueKind switch {
         JsonValueKind.Null => DmValue.Null,
         JsonValueKind.Number => new(value.GetSingle()),
-        JsonValueKind.String => new(value.GetString()),
+        JsonValueKind.String => DecodeCompilerText(value),
         JsonValueKind.Object => ConvertTaggedValue(value),
         _ => throw new CompatibilityException($"Unsupported compiler value: {value.ValueKind}.")
     };
+    private static DmValue DecodeCompilerText(JsonElement value) {
+        try { return new(value.GetString()); }
+        catch (InvalidOperationException ex) {
+            throw new CompatibilityException("Malformed compiler text.", ex);
+        }
+    }
+
     private DmValue ConvertTaggedValue(JsonElement value) {
         var kind = value.GetProperty("type").GetInt32();
         if (kind == 0) return new(new DmResource(value.GetProperty("resourcePath").GetString()!));
@@ -642,7 +649,8 @@ public sealed partial class DmRuntime {
     }
     private void ApplyMapEntityOverrides(DmObject instance, Dictionary<string, JsonElement>? overrides) {
         foreach (var (name, raw) in (overrides ?? []).OrderBy(pair => pair.Key, StringComparer.Ordinal)) {
-            if (name is "icon" or "invisibility")
+            var appearanceOverride = name is "desc" or "icon" or "invisibility";
+            if (appearanceOverride)
                 ChargeMapAppearanceWork(1 + System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(raw).Length, name);
             var category = raw.ValueKind.ToString();
             if (raw.ValueKind == JsonValueKind.Object && raw.TryGetProperty("type", out var tag) && tag.ValueKind == JsonValueKind.Number && tag.TryGetInt32(out var kind))
@@ -653,7 +661,7 @@ public sealed partial class DmRuntime {
                 throw Failure("metadata/tag override is not implemented");
             if (!instance.HasVariable(name))
                 throw Failure("unknown or non-instance field is not implemented");
-            if (name is "icon" or "invisibility") {
+            if (appearanceOverride) {
                 try { ApplyMapAppearanceOverride(instance, name, raw); }
                 catch (CompatibilityException ex) { throw Failure(ex.Message, ex); }
                 continue;
@@ -726,13 +734,15 @@ public sealed partial class DmRuntime {
 
     private void ApplyMapAppearanceOverride(DmObject obj, string name, JsonElement raw) {
         ValidateMapAppearanceOwner(obj, name, writing: true);
-        // Invisibility accepts a numeric compiler literal. Tagged values and other
-        // types stay outside this mapped field's contract.
-        DmValue value;
-        if (name == "icon") value = DecodeMapIcon(raw);
-        else if (raw.ValueKind == JsonValueKind.Number && raw.TryGetSingle(out var number))
-            value = NormalizeMapInvisibility(new DmValue(number), declared: false);
-        else throw new CompatibilityException("Map invisibility requires a numeric literal.");
+        var value = name switch {
+            "desc" when raw.ValueKind is JsonValueKind.String or JsonValueKind.Null => ConvertValue(raw),
+            "desc" => throw new CompatibilityException("Map desc requires text or null."),
+            "icon" => DecodeMapIcon(raw),
+            "invisibility" when raw.ValueKind == JsonValueKind.Number && raw.TryGetSingle(out var number) =>
+                NormalizeMapInvisibility(new DmValue(number), declared: false),
+            "invisibility" => throw new CompatibilityException("Map invisibility requires a numeric literal."),
+            _ => throw new CompatibilityException($"Unsupported map appearance field '{name}'.")
+        };
         if (obj.DeferredVariables is { } defaults) {
             // The first write materializes every inherited key and the two metadata keys.
             ChargeMapAppearanceWork(1 + defaults.Count + 2 * ("type".Length + "parent_type".Length), name);
@@ -1709,6 +1719,11 @@ public sealed partial class DmRuntime {
                     if (raw.IsNull && !location.NameOverridden)
                         return obj.TypePath[(obj.TypePath.LastIndexOf('/') + 1)..].Replace('_', ' ');
                     return raw.Value as string ?? "";
+                }
+                if (name == "desc") {
+                    ValidateMapAppearanceOwner(obj, name, writing: false);
+                    var desc = obj.GetVariableOrDefault(name);
+                    return desc.Value is null or string ? desc : throw new CompatibilityException("Map desc requires text or null.");
                 }
                 if (name == "invisibility") {
                     ValidateMapAppearanceOwner(obj, name, writing: false);

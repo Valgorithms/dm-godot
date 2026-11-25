@@ -143,6 +143,15 @@ call stack, queued work and virtual time. After globals finish, additional calls
 to `AdvanceGlobals(n)` return true until the session closes. The cumulative VM
 work, list-allocation and split-output budgets span all of these calls.
 
+After each global-initializer step, `session.GlobalWork` reports `StepSpent` and
+`Remaining` in VM work units. `StepSpent` includes each admitted dispatch and
+native charge, even if a later operation faults. An atomic native operation can
+consume more units than the dispatch count. `Remaining` is the cumulative global
+allowance left at that point. The probe records the pair as `global_step_work`
+and `global_work_remaining`. Both are null before the first step. Completion
+polls, later boot phases and disposal preserve the last pair. A project without a
+global initializer reports zero spent and the full allowance on its first step.
+
 The session accepts the same immutable file inventory and text snapshot as the
 runtime constructor. After an advance, `LogCount` and `PendingThreads` report
 scalar counts, including on failure. A fault closes the session. Cancellation

@@ -49,6 +49,8 @@ class ProbeTests(unittest.TestCase):
         self.assertIn("value kind 2", report["message"])
         self.assertIsNone(report["log_count"])
         self.assertIsNone(report["pending_threads"])
+        self.assertIsNone(report["global_step_work"])
+        self.assertIsNone(report["global_work_remaining"])
 
     def world_new(self, artifact):
         world = next(i for i, item in enumerate(artifact["Types"]) if item["Path"] == "/world")
@@ -84,6 +86,9 @@ class ProbeTests(unittest.TestCase):
                                               "Bytecode": base64.b64encode(prefix + tail).decode()}
                 report = self.run_artifact(artifact)
                 self.assertEqual((report["runtime_status"], report["phase"]), (status, "boot"))
+                # Each tail byte is one charged opcode, including the unsupported one.
+                self.assertEqual(report["global_step_work"], len(tail))
+                self.assertEqual(report["global_work_remaining"], 100_000 - len(prefix) - len(tail))
                 if status == "blocked":
                     self.assertIn("probe_global_init, byte 256", report["message"])
                     self.assertEqual((report["log_count"], report["pending_threads"]), (0, 0))

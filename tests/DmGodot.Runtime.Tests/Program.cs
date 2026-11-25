@@ -948,13 +948,160 @@ foreach (var artifact in new[] { turfNamePath, optimizedTurfNamePath }) {
         Check(second.Logs.Select(l => l.Text).SequenceEqual(expected), "A previous runtime changed subsequent initialization.");
     }));
 
+    tests.Add(($"matrix values and atom transforms copy both boundaries: {artifact}", () => {
+        var project = CompiledProject.Load(artifact);
+        var runtime = new DmRuntime(project);
+        runtime.Boot();
+        var left = new DmValue(runtime.MapCells[0].Turf);
+        var right = new DmValue(runtime.MapCells[1].Turf);
+        DmValue Result(string proc, params DmValue[] args) {
+            runtime.InvokeGlobal(proc, args);
+            return runtime.GetGlobal("matrix_result");
+        }
+        void Coefficients(DmValue matrix, params float[] expected) {
+            var result = (DmList)Result("matrix_report", matrix).Value!;
+            Check(result.Values.Select(v => v.Number).SequenceEqual(expected), "Unexpected matrix coefficients.");
+        }
+        var identity = Result("matrix_identity");
+        Coefficients(identity, 1, 0, 0, 0, 1, 0);
+        var input = Result("matrix_six", 2, -3, 5, -7, 11, -13);
+        Coefficients(input, 2, -3, 5, -7, 11, -13);
+        runtime.InvokeGlobal("matrix_change_label", input, "edited");
+        runtime.InvokeGlobal("matrix_store", left, input);
+        runtime.InvokeGlobal("matrix_change_c", input, 29);
+        Coefficients(input, 2, -3, 29, -7, 11, -13);
+        var read = Result("matrix_read", left);
+        var otherRead = Result("matrix_read", left);
+        Check(read != otherRead && read != input, "Transform reads returned an existing matrix identity.");
+        var matrix = (DmObject)read.Value!;
+        Check(matrix.TypePath == "/matrix" && matrix.Variables["parent_type"].Value is DmTypeReference { Path: "/datum" } &&
+            matrix.Variables["matrix_label"].ToString() == "default" &&
+            ((DmObject)input.Value!).Variables["matrix_label"].ToString() == "edited",
+            "A transform getter lost matrix type metadata or copied custom per-datum state from its input.");
+        runtime.InvokeGlobal("matrix_change_c", read, 37);
+        Coefficients(otherRead, 2, -3, 5, -7, 11, -13);
+        Coefficients(Result("matrix_read", left), 2, -3, 5, -7, 11, -13);
+        Coefficients(Result("matrix_read", right), 1, 0, 0, 0, 1, 0);
+        runtime.InvokeGlobal("matrix_store", right, read);
+        Coefficients(Result("matrix_read", right), 2, -3, 37, -7, 11, -13);
+        Coefficients(Result("matrix_read", left), 2, -3, 5, -7, 11, -13);
+        Check(runtime.GetGlobal("matrix_new_count").Number == 0, "A native matrix or transform copy ran game-defined /matrix/New.");
+        Throws(() => runtime.InvokeGlobal("matrix_store", left, DmValue.Null), "Only native matrix assignment");
+        Throws(() => runtime.InvokeGlobal("matrix_change_c", read, "text"), "Matrix coefficients require finite numbers");
+        Coefficients(read, 2, -3, 37, -7, 11, -13);
+        Coefficients(Result("matrix_read", left), 2, -3, 5, -7, 11, -13);
+        var previous = runtime.GetGlobal("matrix_result");
+        var logCount = runtime.Logs.Count;
+        Throws(() => runtime.InvokeGlobal("matrix_output", input), "Matrix stringification is not implemented");
+        Check(runtime.Logs.Count == logCount, "A failed matrix output added a log entry.");
+        Throws(() => runtime.InvokeGlobal("matrix_one", input), "matrix requires zero or six");
+        foreach (var value in new[] { DmValue.Null, new DmValue("3"), new DmValue(float.NaN), new DmValue(float.PositiveInfinity) })
+            Throws(() => runtime.InvokeGlobal("matrix_six", 1, 2, value, 4, 5, 6), "Matrix coefficients require finite numbers");
+        Throws(() => runtime.InvokeGlobal("matrix_new_explicit"), "Construction of native/atom type /matrix");
+        Check(runtime.GetGlobal("matrix_result") == previous && runtime.GetGlobal("matrix_new_count").Number == 0,
+            "An unsupported construction published a result or ran the game constructor.");
+    }));
+    tests.Add(($"mapped turf New sees the inherited identity or six-number transform: {artifact}", () => {
+        var json = MappedTurf("/turf/initialized_child/translated_matrix");
+        var definitions = json["Maps"]![0]!["CellDefinitions"]!;
+        definitions["b"]!["Turf"]!["Type"] = TypeId(json, "/turf/initialized_child/identity_matrix");
+        var project = CompiledProject.Parse(json.ToJsonString());
+        var runtime = new DmRuntime(project);
+        Check(runtime.MapCells.All(cell => cell.Turf.Variables["transform_at_new"].IsNull), "Map New ran during construction.");
+        runtime.Boot();
+        foreach (var cell in runtime.MapCells) {
+            var seen = (DmList)cell.Turf.Variables["transform_at_new"].Value!;
+            float offset = cell.X <= 2 ? -4 : 0;
+            Check(seen.Values.Select(v => v.Number).SequenceEqual(new[] { 1f, 0, offset, 0, 1, offset }),
+                "Mapped New did not observe the selected inherited transform.");
+        }
+        Check(runtime.GetGlobal("matrix_new_count").Number == 0, "Mapped initialization called /matrix/New.");
+        definitions["a"]!["Turf"]!["VarOverrides"]!["transform"] = 7;
+        Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), "'transform' overlaps");
+        var plain = JsonNode.Parse(File.ReadAllText(artifact))!;
+        plain["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"]!["transform"] = 7;
+        Throws(() => new DmStartupSession(CompiledProject.Parse(plain.ToJsonString())), "Map turf override 'transform'");
+    }));
+    tests.Add(($"mapped matrix initialization requires the native atom transform slot: {artifact}", () => {
+        foreach (var detached in new[] { true, false }) {
+            var json = MappedTurf("/turf/initialized_child/identity_matrix");
+            var turf = json["Types"]![TypeId(json, "/turf")]!;
+            if (detached) {
+                turf["Parent"] = TypeId(json, "/datum");
+                turf["Variables"]!["transform"] = null;
+            } else {
+                var leaf = json["Types"]![TypeId(json, "/turf/initialized_child/identity_matrix")]!;
+                leaf["Variables"]!["transform"] = 7;
+            }
+            Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), "requires a declared null transform on an atom");
+        }
+    }));
+    tests.Add(($"native matrix construction checks defaults and reserves work before publication: {artifact}", () => {
+        var json = MappedTurf("/turf/initialized_child/identity_matrix");
+        var matrix = json["Types"]![TypeId(json, "/matrix")]!;
+        matrix["Variables"]!["a"] = 11;
+        matrix["Variables"]!["f"] = 16;
+        json["Types"]![TypeId(json, "/datum")]!["Variables"]!["inherited_number"] = 19;
+        var project = CompiledProject.Parse(json.ToJsonString());
+        var normal = new DmRuntime(project);
+        normal.Boot();
+        normal.InvokeGlobal("matrix_identity");
+        var unit = (DmObject)normal.GetGlobal("matrix_result").Value!;
+        Check(unit.Variables["a"].Number == 1 && unit.Variables["f"].Number == 0 &&
+            unit.Variables["inherited_number"].Number == 19, "Native identity or inherited custom fields changed.");
+
+        var fields = matrix["Variables"]!;
+        var expensiveName = new string('m', DmRuntime.DefaultInstructionBudget);
+        fields[expensiveName] = 0;
+        Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), "Matrix work budget exhausted");
+        json["Maps"] = new JsonArray();
+        var limited = new DmRuntime(CompiledProject.Parse(json.ToJsonString())) { InstructionBudget = 64 };
+        limited.Boot();
+        Throws(() => limited.InvokeGlobal("matrix_identity"), "Matrix work budget exhausted");
+        Check(limited.GetGlobal("matrix_result").Number == 17, "A matrix allocation fault published a partial value.");
+
+        fields.AsObject().Remove(expensiveName);
+        // Move the compiler's actual list initializer from the fixture subtype to /matrix itself.
+        var subtype = json["Types"]![TypeId(json, "/matrix/with_list")]!;
+        var initializer = subtype["InitProc"]!.GetValue<int>();
+        subtype.AsObject().Remove("InitProc");
+        matrix["InitProc"] = initializer;
+        fields["entries"] = null;
+        json["Procs"]![initializer]!["OwningTypeId"] = TypeId(json, "/matrix");
+        var unsupported = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+        unsupported.Boot();
+        Throws(() => unsupported.InvokeGlobal("matrix_identity"), "Executable /matrix type initialization");
+    }));
+    tests.Add(($"executable global matrix body stays ordinary and fails mapped preflight: {artifact}", () => {
+        var json = MappedTurf("/turf/initialized_child/identity_matrix");
+        var proc = json["Procs"]!.AsArray().Single(p => p!["Name"]!.GetValue<string>() == "matrix")!;
+        proc["SourceInfo"] = new JsonArray(new JsonObject { ["Offset"] = 0, ["Line"] = 1 });
+        Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), "call 'matrix' is not implemented");
+        var empty = json.DeepClone();
+        empty["Maps"] = new JsonArray();
+        var sourced = new DmRuntime(CompiledProject.Parse(empty.ToJsonString()));
+        sourced.Boot();
+        Throws(() => sourced.InvokeGlobal("matrix_identity"), "Native proc 'matrix' is not implemented");
+        Check(sourced.GetGlobal("matrix_result").Number == 17, "An empty source-backed stub produced a native matrix.");
+        var code = new List<byte> { (byte)DreamProcOpcode.ReturnFloat };
+        code.AddRange(BitConverter.GetBytes(37f));
+        proc["Bytecode"] = Convert.ToBase64String(code.ToArray());
+        Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), "call 'matrix' is not implemented");
+        json["Maps"] = new JsonArray();
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+        runtime.Boot();
+        runtime.InvokeGlobal("matrix_identity");
+        Check(runtime.GetGlobal("matrix_result").Number == 37, "Executable global matrix body was replaced by native construction.");
+    }));
+
     tests.Add(($"mapped turf rejects unsupported effects before startup publication: {artifact}", () => {
         foreach (var (type, reason) in new[] {
             ("unsafe_helper", "call 'effectful_turf_helper'"), ("unsafe_sleep", "call 'sleep'"),
             ("unsafe_global", "own user field"), ("unsafe_native", "field 'contents'"),
             ("dimensional", "CreateMultidimensionalList"), ("multiple_keys", "one type-literal associative key"),
             ("text_key", artifact == optimizedTurfNamePath ? "opcode PushStringFloat" : "one type-literal associative key"),
-            ("identity_matrix", "call 'matrix'"), ("translated_matrix", "call 'matrix'")
+            ("bad_matrix", artifact == optimizedTurfNamePath ? "opcode PushStringFloat" : "six finite numeric literals"),
+            ("matrix_to_user_field", "matrix result directly to transform"), ("list_transform", "field 'transform'")
         }) {
             var json = MappedTurf("/turf/initialized_child/" + type);
             var project = CompiledProject.Parse(json.ToJsonString());

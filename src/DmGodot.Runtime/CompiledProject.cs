@@ -15,6 +15,8 @@ public sealed class CompiledProject {
     public string BytecodeVersion => Data.Metadata.Version;
     public int TypeCount => Data.Types.Length;
     public int ProcedureCount => Data.Procs.Length;
+    internal int MatrixTypeId { get; } = -1;
+    internal int NativeMatrixProcId { get; } = -1;
     public string SourcePath { get; }
 
     private CompiledProject(CompiledData data, string path) {
@@ -34,10 +36,23 @@ public sealed class CompiledProject {
                     throw new CompatibilityException($"Invalid or cyclic type parent for type {i}.");
             }
             var type = data.Types[i];
+            if (type.Path == "/matrix") MatrixTypeId = i;
             foreach (var id in (type.Procs ?? []).SelectMany(p => p).Concat(type.InitProc is int init ? [init] : []))
                 CheckProc(id);
         }
-        foreach (var id in data.GlobalProcs ?? []) CheckProc(id);
+        var sawMatrix = false;
+        foreach (var id in data.GlobalProcs ?? []) {
+            CheckProc(id);
+            var proc = data.Procs[id];
+            if (proc.Name != "matrix") continue;
+            // An executable, ambiguous or differently shaped declaration is not the pinned native.
+            NativeMatrixProcId = !sawMatrix && data.Types[0].Path == "/" && proc.OwningTypeId == 0 &&
+                proc.Bytecode is { Length: 0 } && proc.SourceInfo is { Length: 0 } &&
+                proc.Attributes == 0 && proc.MaxVariableId == 0 &&
+                proc.Arguments is [{ Name: "a" }, { Name: "b" }, { Name: "c" }, { Name: "d" }, { Name: "e" }, { Name: "f" }]
+                ? id : -1;
+            sawMatrix = true;
+        }
         foreach (var proc in data.Procs.Append(data.GlobalInitProc).OfType<Procedure>()) {
             if (proc.OwningTypeId < 0 || proc.OwningTypeId >= data.Types.Length || proc.MaxVariableId < 0 || proc.MaxVariableId > 65536)
                 throw new CompatibilityException($"Invalid procedure metadata for '{proc.Name}'.");

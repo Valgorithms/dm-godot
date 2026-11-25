@@ -24,12 +24,24 @@ revision and opcode hash are checked separately by the build tooling and loader.
   assign literal values, positional lists and single-entry lists keyed by a literal
   type to declared user fields. Each cell gets fresh lists, including nested lists.
   Positional list creation and packed literal instructions accept up to 256 entries
-  apiece. Calls such as `matrix()`, reads, yields and writes to native fields fail
-  explicitly. Disjoint DMM overrides are visible to turf `New()`. An override
+  apiece. A direct call to the built-in `matrix()` or `matrix(a,b,c,d,e,f)`
+  can initialize `src.transform` when all six arguments are finite numeric
+  literals. The validator rejects other calls, reads, yields and native field
+  writes. Disjoint DMM overrides are visible to turf `New()`. An override
   targeting an initializer assignment is rejected because the evaluation order
   for a shadowed assignment has not been established.
   Validation, copying inherited fields and executing bytecode share the finite
   constructor work allowance. List allocations use the existing slot limit.
+- The supported global `matrix()` returns a fresh identity matrix with
+  coefficients `(1,0,0,0,1,0)`. The six-argument form accepts finite numbers
+  in `a,b,c,d,e,f` order. Assigning a matrix to an atom's `transform` copies
+  its six coefficients. Each read returns a fresh matrix, including reads of
+  the default identity. Neither operation invokes a user-defined `/matrix/New`.
+  Construction and reads reserve work for the instance's inherited fields.
+  The runtime rejects executable matrix defaults, nonnumeric or nonfinite
+  coefficient writes, and nonmatrix assignments to `atom.transform`.
+  Explicit `new /matrix`, other constructor forms, DMM transform literals and
+  rendering the transform remain outside this subset.
 - Turf `name` accepts supported raw compiler values. DM `.name` reads preserve strings (including empty/formatting text)
   and normalize nonstrings to empty, matching the pinned native setter. Raw values stay
   intact. Name writes and object stringification remain unsupported. Unknown override

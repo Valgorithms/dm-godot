@@ -2558,6 +2558,132 @@ foreach (var artifact in new[] { alistPath, alistOptimizedPath }) {
 var entityOverridePath = args.Length > 11 ? args[11] : "build/entity-overrides.json";
 var entityOverrideOptimizedPath = args.Length > 12 ? args[12] : "build/entity-overrides-optimized.json";
 foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath }) {
+    const string iconAsset = "icons/sign.dmi";
+    (JsonNode Json, string Token, int Index) SignMap() {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var map = json["Maps"]![0]!;
+        map["Blocks"]![0]!["Cells"] = new JsonArray("h", "i", "j", "k", "j", "j", "j");
+        var token = map["CellDefinitions"]!["h"]!["Objects"]![0]!["VarOverrides"]!["icon"]!["resourcePath"]!.GetValue<string>();
+        var index = Array.IndexOf(json["Resources"]!.AsArray().Select(value => value!.GetValue<string>()).ToArray(), token);
+        Check(index >= 0 && token != iconAsset, "Expected a compiled resource token distinct from the canonical asset name.");
+        return (json, token, index);
+    }
+    DmMapIconInventory Grant(CompiledProject project, string token, int index) =>
+        new(project, new DmFileInventory([iconAsset]), [new DmMapIconBinding(index, token, iconAsset)]);
+
+    tests.Add(($"mapped sign New sees its own DMI and state: {artifact}", () => {
+        var (json, token, index) = SignMap();
+        var project = CompiledProject.Parse(json.ToJsonString());
+        var runtime = new DmRuntime(project, mapIcons: Grant(project, token, index));
+        var signs = runtime.MapCells.Select(cell => cell.Entities[0]).ToArray();
+        Check(signs[0].Variables["icon_seen"].IsNull && signs[1].Variables["icon_seen"].IsNull,
+            "Mapped New executed before startup.");
+        runtime.Boot();
+        foreach (var i in new[] { 0, 1, 3 })
+            Check(signs[i].Variables["icon_seen"].Value is DmResource resource && resource.Path == token &&
+                signs[i].Variables["matched_literal"].Number == 1,
+                "The approved DMM or inherited icon differed from the compiled resource literal in New.");
+        Check(signs[0].Variables["state_seen"].ToString() == "left" && signs[1].Variables["state_seen"].ToString() == "right",
+            "One DMI resource did not preserve each sign's own icon_state.");
+        Check(signs[2].Variables["icon_seen"].IsNull && signs[2].Variables["matched_literal"].Number == 0,
+            "A mapped override modified an unoverridden sibling's null icon.");
+        Throws(() => runtime.InvokeGlobal("write_sign_icon", new DmValue(signs[0])), "Mutation of map atom.icon");
+        Throws(() => runtime.InvokeGlobal("sign_file_query"), "fexists requires an explicitly configured");
+        Throws(() => runtime.InvokeGlobal("sign_icon_text", new DmValue(signs[0])), "Stringification of a mapped DMI resource");
+        var named = new DmObject(TypeId(json, "/datum"), "/datum");
+        named.Variables["name"] = signs[0].Variables["icon_seen"];
+        Throws(() => runtime.InvokeGlobal("output_object", new DmValue(named)), "Stringification of a mapped DMI resource");
+        var otherProject = CompiledProject.Parse(json.ToJsonString());
+        Throws(() => new DmStartupSession(otherProject, mapIcons: Grant(project, token, index)), "same compiled project");
+    }));
+    tests.Add(($"mapped icons require an exact tracked regular DMI grant: {artifact}", () => {
+        var (json, token, index) = SignMap();
+        var project = CompiledProject.Parse(json.ToJsonString());
+        var binding = new DmMapIconBinding(index, token, iconAsset);
+        var files = new DmFileInventory([iconAsset, "icons/other.dmi", "icons/note.txt"]);
+        Throws(() => new DmStartupSession(project, fileInventory: files), "approved DMI resource");
+        var noBindings = new DmMapIconInventory(project, files, []);
+        Throws(() => new DmStartupSession(project, mapIcons: noBindings), "no approved inventory binding");
+        foreach (var unavailable in new[] {
+            new DmFileInventory([]), new DmFileInventory([], [iconAsset]), new DmFileInventory([iconAsset + "/child"])
+        }) Throws(() => new DmMapIconInventory(project, unavailable, [binding]), "tracked regular asset");
+        Throws(() => new DmMapIconInventory(project, files, [binding with { ResourceIndex = -1 }]), "index/token mismatch");
+        Throws(() => new DmMapIconInventory(project, files, [binding with { ResourceToken = "other.dmi" }]), "index/token mismatch");
+        Throws(() => new DmMapIconInventory(project, files, [binding with { InventoryPath = token }]), "path component");
+        Throws(() => new DmMapIconInventory(project, files, [binding with { InventoryPath = "icons/note.txt" }]), ".dmi");
+        Throws(() => new DmMapIconInventory(project, files, [binding, binding]), "Duplicate");
+        Throws(() => new DmMapIconInventory(project, files, [binding, binding with { InventoryPath = "icons/other.dmi" }]), "Duplicate");
+    }));
+    tests.Add(($"incomplete optional resource tables cannot grant icons: {artifact}", () => {
+        var good = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var token = good["Resources"]![0]!.GetValue<string>();
+        var binding = new DmMapIconBinding(0, token, iconAsset);
+        foreach (var invalid in new JsonNode[] {
+            new JsonArray(token, new JsonObject { ["nested"] = new JsonArray("value") }, "later.dmi"),
+            new JsonArray(token, new string('x', DmFileInventory.MaximumPathLength + 1)),
+            new JsonObject { ["nested"] = new JsonArray(token) }
+        }) {
+            var json = good.DeepClone();
+            json["Resources"] = invalid;
+            var project = CompiledProject.Parse(json.ToJsonString());
+            var unrelated = new DmRuntime(project);
+            unrelated.Boot();
+            Check(unrelated.MapCells.Count == 7, "An unused resource table changed the map.");
+            Throws(() => new DmMapIconInventory(project, new DmFileInventory([iconAsset]), [binding]),
+                "available compiler resource table");
+        }
+        Throws(() => CompiledProject.Parse("{\"Resources\":[[1],"), "Invalid OpenDream compiler JSON");
+    }));
+    tests.Add(($"mapped icon rejects unsupported values and ancestry before publication: {artifact}", () => {
+        var (original, token, index) = SignMap();
+        foreach (var raw in new JsonNode?[] {
+            null, JsonValue.Create(37), JsonValue.Create("icons/sign.dmi"),
+            new JsonObject { ["type"] = 1, ["value"] = 0 },
+            new JsonObject { ["type"] = 0, ["resourcePath"] = token, ["extra"] = 1 }
+        }) {
+            var json = original.DeepClone();
+            json["Maps"]![0]!["CellDefinitions"]!["h"]!["Objects"]![0]!["VarOverrides"]!["icon"] = raw;
+            var project = CompiledProject.Parse(json.ToJsonString());
+            Throws(() => new DmStartupSession(project, mapIcons: Grant(project, token, index)), "requires a tagged DMI resource");
+        }
+        foreach (var invalid in new[] { new JsonObject { ["type"] = 0 }, new JsonObject { ["type"] = 0, ["resourcePath"] = null } }) {
+            var json = original.DeepClone();
+            json["Maps"]![0]!["CellDefinitions"]!["h"]!["Objects"]![0]!["VarOverrides"]!["icon"] = invalid;
+            Throws(() => CompiledProject.Parse(json.ToJsonString()), "null or invalid resource path");
+        }
+        var tooLong = original.DeepClone();
+        tooLong["Maps"]![0]!["CellDefinitions"]!["h"]!["Objects"]![0]!["VarOverrides"]!["icon"]!["resourcePath"] =
+            new string('x', 6 * DmFileInventory.MaximumPathLength + 3);
+        var oversized = CompiledProject.Parse(tooLong.ToJsonString());
+        Throws(() => new DmStartupSession(oversized, mapIcons: Grant(oversized, token, index)), "compiler token length");
+        foreach (var detached in new[] { false, true }) {
+            var json = original.DeepClone();
+            var sign = json["Types"]![TypeId(json, "/obj/icon_sign")]!;
+            if (detached) {
+                json["Types"]![TypeId(json, "/atom/movable")]!["Parent"] = TypeId(json, "/datum");
+                sign["Variables"]!["icon"] = null;
+            } else sign["ConstVariables"] = new JsonArray("icon");
+            var project = CompiledProject.Parse(json.ToJsonString());
+            Throws(() => new DmStartupSession(project, mapIcons: Grant(project, token, index)),
+                detached ? "declared icon on a mapped movable atom" : "const field");
+        }
+    }));
+    tests.Add(($"map icon permission excludes mixed builtin roles: {artifact}", () => {
+        var (json, token, index) = SignMap();
+        var turf = TypeId(json, "/turf");
+        json["Types"]![turf]!["Parent"] = TypeId(json, "/atom/movable");
+        json["Maps"]![0]!["CellDefinitions"]!["h"]!["Objects"]![0]!["Type"] = turf;
+        var project = CompiledProject.Parse(json.ToJsonString());
+        Throws(() => new DmStartupSession(project, mapIcons: Grant(project, token, index)),
+            "declared icon on a mapped movable atom");
+    }));
+    tests.Add(($"map icon materialization charges inherited fields before the first write: {artifact}", () => {
+        var (json, token, index) = SignMap();
+        var sign = json["Types"]![TypeId(json, "/obj/icon_sign")]!;
+        sign["Variables"]![new string('a', DmRuntime.DefaultInstructionBudget)] = null;
+        var project = CompiledProject.Parse(json.ToJsonString());
+        Throws(() => new DmStartupSession(project, mapIcons: Grant(project, token, index)), "Map icon work budget exhausted");
+    }));
     tests.Add(($"entity raw overrides precede inherited initialization and New: {artifact}", () => {
         var project = CompiledProject.Load(artifact);
         var runtime = new DmRuntime(project);
@@ -2616,7 +2742,7 @@ foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath
     foreach (var (field, reason) in new[] {
         ("unknown_field", "unknown or non-instance"), ("only_global", "unknown or non-instance"),
         ("fixed", "const field"), ("type", "metadata/tag"), ("parent_type", "metadata/tag"), ("vars", "metadata/tag"), ("tag", "metadata/tag"),
-        ("loc", "native field"), ("x", "native field"), ("dir", "native field"), ("icon", "native field"), ("layer", "native field"),
+        ("loc", "native field"), ("x", "native field"), ("dir", "native field"), ("icon", "requires a tagged DMI resource"), ("layer", "native field"),
         ("density", "native field"), ("screen_loc", "native field")
     }) tests.Add(($"entity override rejects {field}: {artifact}", () => {
         var json = JsonNode.Parse(File.ReadAllText(artifact))!;

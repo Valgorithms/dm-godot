@@ -7,6 +7,11 @@
 "f" = (/obj/null_name/leaf_thing,/turf/plain,/area/plain)
 "g" = (/obj/base/child/reset_name,/turf/plain,/area/plain)
 
+"h" = (/obj/icon_sign{icon = 'icons/sign.dmi'; icon_state = "left"},/turf/plain,/area/plain)
+"i" = (/obj/icon_sign{icon_state = "right"; icon = 'icons/sign.dmi'},/turf/plain,/area/plain)
+"j" = (/obj/icon_sign,/turf/plain,/area/plain)
+"k" = (/obj/icon_sign/with_default/child,/turf/plain,/area/plain)
+
 (1,1,1) = {"
 abcdefg
 "}

@@ -10,6 +10,7 @@ var phase = "artifact_load";
 var status = "unexpected_error";
 string? artifactHash = null;
 string? inventoryHash = null;
+string? mapIconHash = null;
 Exception? failure = null;
 int? pendingThreads = null;
 int? logCount = null;
@@ -17,20 +18,35 @@ DmGlobalWork? globalWork = null;
 var elapsed = Stopwatch.StartNew();
 var exitCode = 1;
 try {
-    if (args.Length != 1 && ((args.Length != 7 && args.Length != 9) || args[1] != "--file-inventory" ||
-        args[3] != "--source-revision" || args[5] != "--source-tree" ||
-        (args.Length == 9 && args[7] != "--content-allowlist")))
-        throw new ArgumentException("Expected artifact path and optional explicit file-inventory/source binding arguments.");
+    string? fileManifest = null, contentAllowlist = null, iconManifest = null;
+    if (args.Length != 1) {
+        if (args.Length is not (7 or 9 or 11) || args[3] != "--source-revision" || args[5] != "--source-tree")
+            throw new ArgumentException("Expected an artifact and optional source-bound snapshot arguments.");
+        switch (args[1]) {
+            case "--file-inventory": fileManifest = args[2]; break;
+            case "--map-icons": iconManifest = args[2]; break;
+            default: throw new ArgumentException("Unknown snapshot option.");
+        }
+        for (var i = 7; i < args.Length; i += 2) {
+            switch (args[i]) {
+                case "--content-allowlist" when fileManifest is not null && contentAllowlist is null:
+                    contentAllowlist = args[i + 1]; break;
+                case "--map-icons" when iconManifest is null:
+                    iconManifest = args[i + 1]; break;
+                default: throw new ArgumentException("Unknown, duplicated or inapplicable snapshot option.");
+            }
+        }
+    }
     var path = Path.GetFullPath(args[0]);
     var bytes = File.ReadAllBytes(path);
     artifactHash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     var project = CompiledProject.Parse(System.Text.Encoding.UTF8.GetString(bytes), path);
     DmFileInventory? inventory = null;
     DmTextFileSnapshot? textFiles = null;
-    if (args.Length is 7 or 9) {
+    if (fileManifest is not null) {
         // Only this trusted host executable reads the explicitly selected manifest.
         // The runtime receives owned names, never a host path or filesystem callback.
-        using var stream = File.OpenRead(args[2]);
+        using var stream = File.OpenRead(fileManifest);
         const int manifestLimit = 32 * 1024 * 1024;
         if (stream.Length > manifestLimit) throw new ArgumentException("File inventory manifest exceeds size limit.");
         using var buffer = new MemoryStream();
@@ -44,34 +60,22 @@ try {
         inventoryHash = Convert.ToHexString(SHA256.HashData(manifestBytes)).ToLowerInvariant();
         using var manifest = JsonDocument.Parse(manifestBytes);
         var root = manifest.RootElement;
-        if (args.Length != 9 && (root.TryGetProperty("contents", out _) || root.TryGetProperty("content_allowlist_sha256", out _)))
+        if (contentAllowlist is null && (root.TryGetProperty("contents", out _) || root.TryGetProperty("content_allowlist_sha256", out _)))
             throw new ArgumentException("Text snapshot requires a separately supplied trusted allowlist.");
-        ExactKeys(root, args.Length == 9
+        ExactKeys(root, contentAllowlist is not null
             ? ["schema", "scope", "source_revision", "source_tree", "artifact_sha256", "files", "blocked_paths", "content_allowlist_sha256", "contents"]
             : ["schema", "scope", "source_revision", "source_tree", "artifact_sha256", "files", "blocked_paths"]);
-        if (root.GetProperty("schema").GetInt32() != 1 ||
-            root.GetProperty("scope").GetString() != "tracked-source-filesystem-snapshot" ||
-            root.GetProperty("source_revision").GetString() != args[4] ||
-            root.GetProperty("source_tree").GetString() != args[6] ||
-            root.GetProperty("artifact_sha256").GetString() != artifactHash ||
-            args[4].Length != 40 || args[6].Length != 40 ||
-            !args[4].All(Uri.IsHexDigit) || !args[6].All(Uri.IsHexDigit))
+        if (!MatchesSource(root, "tracked-source-filesystem-snapshot", args[4], args[6], artifactHash))
             throw new ArgumentException("File inventory source/artifact binding mismatch.");
         try {
-            inventory = new DmFileInventory(
-                root.GetProperty("files").EnumerateArray().Select(value => value.GetString()!),
-                root.GetProperty("blocked_paths").EnumerateArray().Select(value => value.GetString()!));
+            inventory = ReadFileInventory(root);
         } catch (CompatibilityException error) {
             // Invalid host configuration is a failed measurement, not DM incompatibility.
             throw new ArgumentException("Invalid file inventory configuration: " + error.Message, error);
         }
 
-        if (args.Length == 9) {
-            using var allowedStream = File.OpenRead(args[8]);
-            if (allowedStream.Length > 128 * 1024) throw new ArgumentException("Content allowlist size limit exceeded.");
-            var allowedBytes = new byte[checked((int)allowedStream.Length)];
-            allowedStream.ReadExactly(allowedBytes);
-            if (allowedStream.ReadByte() != -1) throw new ArgumentException("Content allowlist changed during reading.");
+        if (contentAllowlist is not null) {
+            var allowedBytes = ReadSmallManifest(contentAllowlist, "Content allowlist");
             using var allowedDocument = JsonDocument.Parse(allowedBytes);
             var allowedRoot = allowedDocument.RootElement;
             var allowedHash = Convert.ToHexString(SHA256.HashData(allowedBytes)).ToLowerInvariant();
@@ -148,8 +152,36 @@ try {
             throw new ArgumentException("Text snapshot requires a separately supplied trusted allowlist.");
         }
     }
+    DmMapIconInventory? mapIcons = null;
+    if (iconManifest is not null) {
+        // The host verifies each regular Git blob, its digests and its DMI kind
+        // before issuing this manifest. The probe checks the attestation's shape
+        // and source/project binding. It never opens or decodes image bytes.
+        var iconBytes = ReadSmallManifest(iconManifest, "Map icon inventory");
+        mapIconHash = Convert.ToHexString(SHA256.HashData(iconBytes)).ToLowerInvariant();
+        using var document = JsonDocument.Parse(iconBytes);
+        var root = document.RootElement;
+        ExactKeys(root, "schema", "scope", "source_revision", "source_tree", "artifact_sha256",
+            "files", "blocked_paths", "bindings");
+        if (!MatchesSource(root, "tracked-map-icon-bindings", args[4], args[6], artifactHash))
+            throw new ArgumentException("Map icon inventory source/artifact binding mismatch.");
+        try {
+            var assets = ReadFileInventory(root);
+            var bindings = root.GetProperty("bindings").EnumerateArray().Select(entry => {
+                ExactKeys(entry, "index", "token", "path", "oid", "bytes", "sha256");
+                if (entry.GetProperty("bytes").GetInt64() <= 0 ||
+                    !Digest(entry.GetProperty("oid").GetString(), 40) || !Digest(entry.GetProperty("sha256").GetString(), 64))
+                    throw new ArgumentException("Invalid map icon source blob attestation.");
+                return new DmMapIconBinding(entry.GetProperty("index").GetInt32(),
+                    entry.GetProperty("token").GetString()!, entry.GetProperty("path").GetString()!);
+            });
+            mapIcons = new DmMapIconInventory(project, assets, bindings);
+        } catch (CompatibilityException error) {
+            throw new ArgumentException("Invalid map icon inventory configuration: " + error.Message, error);
+        }
+    }
     phase = "runtime_construct";
-    using var session = new DmStartupSession(project, inventory, textFiles);
+    using var session = new DmStartupSession(project, inventory, textFiles, mapIcons: mapIcons);
     phase = "boot";
     try {
         while (!session.AdvanceGlobals(globalDispatchBatchSize)) {
@@ -195,6 +227,7 @@ Console.WriteLine(JsonSerializer.Serialize(new {
     phase,
     artifact_sha256 = artifactHash,
     file_inventory_sha256 = inventoryHash,
+    map_icon_inventory_sha256 = mapIconHash,
     instruction_budget = DmRuntime.DefaultInstructionBudget,
     global_step_work = globalWork?.StepSpent,
     global_work_remaining = globalWork?.Remaining,
@@ -214,6 +247,26 @@ Console.WriteLine(JsonSerializer.Serialize(new {
 }));
 return exitCode;
 
+
+static byte[] ReadSmallManifest(string path, string label) {
+    using var stream = File.OpenRead(path);
+    var length = stream.Length;
+    if (length > 128 * 1024) throw new ArgumentException(label + " size limit exceeded.");
+    var bytes = new byte[checked((int)length)];
+    stream.ReadExactly(bytes);
+    if (stream.ReadByte() != -1) throw new ArgumentException(label + " changed during reading.");
+    return bytes;
+}
+
+static DmFileInventory ReadFileInventory(JsonElement root) => new(
+    root.GetProperty("files").EnumerateArray().Select(value => value.GetString()!),
+    root.GetProperty("blocked_paths").EnumerateArray().Select(value => value.GetString()!));
+
+static bool MatchesSource(JsonElement root, string scope, string revision, string tree, string artifact) =>
+    root.GetProperty("schema").GetInt32() == 1 && root.GetProperty("scope").GetString() == scope &&
+    revision.Length == 40 && tree.Length == 40 && revision.All(Uri.IsHexDigit) && tree.All(Uri.IsHexDigit) &&
+    root.GetProperty("source_revision").GetString() == revision &&
+    root.GetProperty("source_tree").GetString() == tree && root.GetProperty("artifact_sha256").GetString() == artifact;
 
 static bool Digest(string? text, int length) =>
     text?.Length == length && text.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');

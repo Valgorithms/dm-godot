@@ -22,9 +22,13 @@ public sealed class DmStartupSession : IDisposable {
     public int LogCount { get; private set; }
     public int PendingThreads { get; private set; }
 
+    public DmStartupSession(CompiledProject project, DmFileInventory? fileInventory,
+        DmTextFileSnapshot? textFiles, CancellationToken cancellationToken)
+        : this(project, fileInventory, textFiles, cancellationToken, null) { }
+
     public DmStartupSession(CompiledProject project, DmFileInventory? fileInventory = null,
-        DmTextFileSnapshot? textFiles = null, CancellationToken cancellationToken = default) {
-        _candidate = new DmRuntime(project, fileInventory, textFiles, cancellationToken);
+        DmTextFileSnapshot? textFiles = null, CancellationToken cancellationToken = default, DmMapIconInventory? mapIcons = null) {
+        _candidate = new DmRuntime(project, fileInventory, textFiles, cancellationToken, mapIcons);
         _cancellation = cancellationToken;
         if (cancellationToken.CanBeCanceled) {
             // A long-lived token must not keep an abandoned world alive. Cancellation

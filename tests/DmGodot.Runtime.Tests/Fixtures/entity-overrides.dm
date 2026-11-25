@@ -65,3 +65,26 @@ world
 var/entity_initial_result
 /proc/test_entity_initial(value)
     entity_initial_result = initial(value:scalar)
+
+/obj/icon_sign
+    var/icon_seen
+    var/matched_literal
+    var/state_seen
+    New()
+        icon_seen = icon
+        matched_literal = (icon == 'icons/sign.dmi')
+        state_seen = icon_state
+
+/obj/icon_sign/with_default
+    icon = 'icons/sign.dmi'
+
+/obj/icon_sign/with_default/child
+
+/proc/write_sign_icon(obj/sign)
+    sign.icon = null
+
+/proc/sign_icon_text(obj/sign)
+    world << "[sign.icon]"
+
+/proc/sign_file_query()
+    return fexists("icons/sign.dmi")

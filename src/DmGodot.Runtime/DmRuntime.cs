@@ -92,15 +92,24 @@ public sealed partial class DmRuntime {
 
     private readonly DmFileInventory? _fileInventory;
     private readonly DmTextFileSnapshot? _textFiles;
+    private readonly DmMapIconInventory? _mapIcons;
 
-    public DmRuntime(CompiledProject project, DmFileInventory? fileInventory = null, DmTextFileSnapshot? textFiles = null)
-        : this(project, fileInventory, textFiles, default) { }
+    // Retain the existing constructor for hosts built against the three-argument signature.
+    public DmRuntime(CompiledProject project, DmFileInventory? fileInventory, DmTextFileSnapshot? textFiles)
+        : this(project, fileInventory, textFiles, default, null) { }
+
+    public DmRuntime(CompiledProject project, DmFileInventory? fileInventory = null, DmTextFileSnapshot? textFiles = null,
+        DmMapIconInventory? mapIcons = null)
+        : this(project, fileInventory, textFiles, default, mapIcons) { }
 
     internal DmRuntime(CompiledProject project, DmFileInventory? fileInventory, DmTextFileSnapshot? textFiles,
-        CancellationToken startupCancellation) {
+        CancellationToken startupCancellation, DmMapIconInventory? mapIcons) {
         _startupCancellation = startupCancellation;
         _startupCancellation.ThrowIfCancellationRequested();
         Project = project;
+        if (mapIcons is not null && !ReferenceEquals(project, mapIcons.Project))
+            throw new CompatibilityException("Map icon inventory must be bound to the same compiled project.");
+        _mapIcons = mapIcons;
         _fileInventory = fileInventory;
         if (textFiles is not null && !ReferenceEquals(fileInventory, textFiles.Inventory))
             throw new CompatibilityException("Text snapshot must share the configured file inventory identity.");
@@ -632,15 +641,22 @@ public sealed partial class DmRuntime {
     }
     private void ApplyMapEntityOverrides(DmObject instance, Dictionary<string, JsonElement>? overrides) {
         foreach (var (name, raw) in (overrides ?? []).OrderBy(pair => pair.Key, StringComparer.Ordinal)) {
+            if (name == "icon")
+                ChargeMapIconWork(1 + System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(raw).Length);
             var category = raw.ValueKind.ToString();
             if (raw.ValueKind == JsonValueKind.Object && raw.TryGetProperty("type", out var tag) && tag.ValueKind == JsonValueKind.Number && tag.TryGetInt32(out var kind))
                 category = $"compiler tag {kind}";
             CompatibilityException Failure(string reason, Exception? inner = null) =>
-                new($"Map entity override '{name}' ({category}) on {instance.TypePath}: {reason}.", inner);
+                new($"Map entity override '{name}' ({category}) on {instance.TypePath}: {reason.TrimEnd('.')}.", inner);
             if (name is "type" or "parent_type" or "vars" or "tag")
                 throw Failure("metadata/tag override is not implemented");
             if (!instance.HasVariable(name))
                 throw Failure("unknown or non-instance field is not implemented");
+            if (name == "icon") {
+                try { ApplyMapIconOverride(instance, raw); }
+                catch (CompatibilityException ex) { throw Failure(ex.Message, ex); }
+                continue;
+            }
             for (int? typeId = instance.TypeId; typeId is not null; typeId = Data.Types[typeId.Value].Parent)
                 if (Data.Types[typeId.Value].ConstVariables?.Contains(name, StringComparer.Ordinal) == true)
                     throw Failure("const field override is not implemented");
@@ -650,6 +666,79 @@ public sealed partial class DmRuntime {
             catch (CompatibilityException ex) { throw Failure(ex.Message, ex); }
             if (name == "name") _mapMovableNameOverrides.Add(instance);
         }
+    }
+
+    private void ChargeMapIconWork(int count) {
+        _startupCancellation.ThrowIfCancellationRequested();
+        if (count < 0 || count > _budget) throw new CompatibilityException("Map icon work budget exhausted.");
+        _budget -= count;
+    }
+
+    private void ValidateMapIconOwner(DmObject obj, bool writing) {
+        var atom = false;
+        var movable = false;
+        for (int? id = obj.TypeId; id is int current; id = Data.Types[current].Parent) {
+            ChargeMapIconWork(1);
+            var type = Data.Types[current];
+            if (type.Path is "/area" or "/turf" || (type.Path == "/atom" && !movable))
+                throw new CompatibilityException("Map icon requires a declared icon on a mapped movable atom.");
+            movable |= type.Path == "/atom/movable";
+            atom |= type.Path == "/atom";
+            if (writing && type.ConstVariables is not null)
+                foreach (var field in type.ConstVariables) {
+                    ChargeMapIconWork(1);
+                    if (field == "icon") throw new CompatibilityException("const field override is not implemented");
+                }
+        }
+        if (!atom || !movable || !obj.HasVariable("icon"))
+            throw new CompatibilityException("Map icon requires a declared icon on a mapped movable atom.");
+    }
+
+    private DmResource ResolveMapIcon(string token) =>
+        _mapIcons?.Resolve(token, ChargeMapIconWork) ??
+        throw new CompatibilityException("Map icon requires an approved DMI resource inventory.");
+
+    private void ApplyMapIconOverride(DmObject obj, JsonElement raw) {
+        ValidateMapIconOwner(obj, writing: true);
+        // The compiler's tagged resource is a closed pair. Its token is opaque;
+        // only an exact, separately approved entry names an asset.
+        if (raw.ValueKind != JsonValueKind.Object || raw.GetPropertyCount() != 2 ||
+            !raw.TryGetProperty("type", out var tag) || tag.ValueKind != JsonValueKind.Number ||
+            !tag.TryGetInt32(out var kind) || kind != 0 || !raw.TryGetProperty("resourcePath", out var path) ||
+            path.ValueKind != JsonValueKind.String)
+            throw new CompatibilityException("Map icon override requires a tagged DMI resource.");
+        // An escaped JSON code unit uses up to six bytes. Bound decoding before GetString().
+        if (System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(path).Length > 6 * DmFileInventory.MaximumPathLength + 2)
+            throw new CompatibilityException("Map icon compiler token length exceeds the supported limit.");
+        var resource = ResolveMapIcon(path.GetString()!);
+        if (obj.DeferredVariables is { } defaults) {
+            // The first write materializes every inherited key and the two metadata keys.
+            ChargeMapIconWork(1 + defaults.Count + 2 * ("type".Length + "parent_type".Length));
+            foreach (var name in defaults.Keys) ChargeMapIconWork(name.Length);
+        }
+        obj.SetVariable("icon", new(resource));
+    }
+
+    private DmValue ReadMapIcon(DmObject obj) {
+        ValidateMapIconOwner(obj, writing: false);
+        var raw = obj.GetVariableOrDefault("icon");
+        if (raw.IsNull) return raw;
+        if (raw.Value is DmResource resource) return new(ResolveMapIcon(resource.Path));
+        throw new CompatibilityException("Reading a non-resource mapped movable icon is not implemented.");
+    }
+
+    private string FormatValue(DmValue value) {
+        if (_mapIcons is null) return value.ToString();
+        // Datum output follows its name. Apply the same resource rule at the end
+        // of the chain and bound cycles without recursively calling ToString().
+        while (value.Value is DmObject { IsNativeMatrix: false } obj &&
+            obj.TryGetVariable("name", out var name) && !name.IsNull) {
+            ChargeMapIconWork(1);
+            value = name;
+        }
+        if (value.Value is DmResource resource && _mapIcons.ContainsToken(resource.Path, ChargeMapIconWork))
+            throw new CompatibilityException("Stringification of a mapped DMI resource is not implemented.");
+        return value.ToString();
     }
 
     private void RequireMapType(int typeId, string ancestorPath, string role) {
@@ -1080,7 +1169,7 @@ public sealed partial class DmRuntime {
                             else if (suffix is StringFormatEncoder.FormatSuffix.StringifyWithArticle or StringFormatEncoder.FormatSuffix.StringifyNoArticle) {
                                 if (index >= values.Length) throw new CompatibilityException("Missing interpolation value.");
                                 if (values[index].Value is DmObject) throw new CompatibilityException("Object/article string interpolation is not implemented.");
-                                result.Append(values[index++].ToString());
+                                result.Append(FormatValue(values[index++]));
                             } else throw new CompatibilityException($"String format {suffix} is not implemented.");
                         }
                         if (index != values.Length) throw new CompatibilityException("Unused interpolation values.");
@@ -1477,7 +1566,7 @@ public sealed partial class DmRuntime {
         if (!ReferenceEquals(recipient.Value, World)) throw new CompatibilityException("Only world output is implemented.");
         if (value.Value is DmObject obj && _mapLocations.ContainsKey(obj))
             throw new CompatibilityException("Map atom stringification is not implemented.");
-        _logs.Add(new(Time, value.ToString()));
+        _logs.Add(new(Time, FormatValue(value)));
     }
     private DmValue[] Arguments(Frame frame) {
         var kind = frame.Reader.Byte(); var count = frame.Reader.Int();
@@ -1599,6 +1688,7 @@ public sealed partial class DmRuntime {
                         return obj.TypePath[(obj.TypePath.LastIndexOf('/') + 1)..].Replace('_', ' ');
                     return raw.Value as string ?? "";
                 }
+                if (name == "icon" && _mapIcons is not null) return ReadMapIcon(obj);
                 if (name == "icon_state")
                     return obj.GetVariableOrDefault(name).Value is string state ? new(state) : DmValue.Null;
             }

@@ -72,6 +72,7 @@ public sealed class DmObject {
     }
     internal DmValue GetVariableOrDefault(string name) => TryGetVariable(name, out var value) ? value : DmValue.Null;
     internal bool HasVariable(string name) => TryGetVariable(name, out _);
+    internal IReadOnlyDictionary<string, DmValue>? DeferredVariables => _defaults;
     internal void SetVariable(string name, DmValue value) => MaterializeVariables()[name] = value;
 }
 /// <summary>Ordered list entries plus associative keys, distinct from a host dictionary.</summary>

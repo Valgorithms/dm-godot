@@ -88,3 +88,17 @@ var/entity_initial_result
 
 /proc/sign_file_query()
     return fexists("icons/sign.dmi")
+
+/obj/visibility_sign
+    invisibility = 7
+    var/seen_at_new
+    New()
+        seen_at_new = invisibility
+
+/obj/visibility_sign/child
+
+var/global/observed_invisibility
+/proc/read_invisibility(value)
+    observed_invisibility = value:invisibility
+/proc/write_invisibility(value)
+    value:invisibility = 0

@@ -1,6 +1,6 @@
 "a" = (/turf/wall,/area/station)
 "b" = (/turf/floor,/area/station)
-"c" = (/mob/player,/turf/floor,/area/station)
+"c" = (/mob/player{invisibility = 100},/turf/floor,/area/station)
 
 (1,1,1) = {"
 aaaaa

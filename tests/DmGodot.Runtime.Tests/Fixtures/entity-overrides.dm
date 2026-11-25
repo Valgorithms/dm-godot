@@ -102,3 +102,17 @@ var/global/observed_invisibility
     observed_invisibility = value:invisibility
 /proc/write_invisibility(value)
     value:invisibility = 0
+
+/obj/described_item
+    desc = "inherited description"
+    var/description_at_new = "before New"
+    New()
+        description_at_new = desc
+
+/obj/described_item/child
+
+var/global/observed_description
+/proc/read_description(value)
+    observed_description = value:desc
+/proc/write_description(value)
+    value:desc = "changed"

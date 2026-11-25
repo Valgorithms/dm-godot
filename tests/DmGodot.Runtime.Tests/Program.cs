@@ -2558,6 +2558,98 @@ foreach (var artifact in new[] { alistPath, alistOptimizedPath }) {
 var entityOverridePath = args.Length > 11 ? args[11] : "build/entity-overrides.json";
 var entityOverrideOptimizedPath = args.Length > 12 ? args[12] : "build/entity-overrides-optimized.json";
 foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath }) {
+    JsonNode DescriptionMap() {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        json["Maps"]![0]!["Blocks"]![0]!["Cells"] = new JsonArray("o", "p", "q", "r", "o", "q", "r");
+        return json;
+    }
+    JsonNode DescriptionOverrides(JsonNode map) => map["Maps"]![0]!["CellDefinitions"]!["o"]!["Objects"]![0]!["VarOverrides"]!;
+
+    tests.Add(($"mapped desc preserves text, explicit null and inherited defaults in New: {artifact}", () => {
+        var json = DescriptionMap();
+        var project = CompiledProject.Parse(json.ToJsonString());
+        var runtime = new DmRuntime(project);
+        var items = runtime.MapCells.Select(cell => cell.Entities[0]).ToArray();
+        const string painted = "<b>café</b> &amp; 🌈";
+        string?[] expected = [painted, "", null, "inherited description", painted, null, "inherited description"];
+        Check(items.Distinct().Count() == items.Length && items.All(obj => Equals(obj.Variables["description_at_new"].Value, "before New")),
+            "Placed items shared identity or called New during construction.");
+        runtime.Boot();
+        for (var i = 0; i < items.Length; i++) {
+            Check(Equals(items[i].Variables["description_at_new"].Value, expected[i]), "New read a different description.");
+            runtime.InvokeGlobal("read_description", new DmValue(items[i]));
+            Check(Equals(runtime.GetGlobal("observed_description").Value, expected[i]), "A later DM field read changed a description.");
+        }
+        Throws(() => runtime.InvokeGlobal("write_description", new DmValue(items[0])), "Mutation of map atom.desc");
+        Throws(() => runtime.InvokeGlobal("read_description", new DmValue(runtime.MapCells[0].Turf)), "Map atom.desc");
+        Check(Equals(items[0].Variables["desc"].Value, painted) && Equals(items[3].Variables["desc"].Value, expected[3]),
+            "A rejected mutation changed an item or its sibling.");
+
+        json["Types"]![TypeId(json, "/obj/described_item")]!["Variables"]!["desc"] = null;
+        var fresh = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+        fresh.Boot();
+        Check(fresh.MapCells[3].Entities[0].Variables["description_at_new"].IsNull &&
+            Equals(fresh.MapCells[1].Entities[0].Variables["description_at_new"].Value, ""),
+            "A null inherited description or explicit empty override changed during startup.");
+    }));
+
+    tests.Add(($"mapped desc rejects unproven values, native roles and const overrides: {artifact}", () => {
+        foreach (var value in new JsonNode[] { JsonValue.Create(37)!,
+            new JsonObject { ["type"] = 0, ["resourcePath"] = "unused.dmi" },
+            new JsonObject { ["type"] = 1, ["value"] = 0 }, new JsonObject { ["type"] = 3, ["values"] = new JsonArray("text") } }) {
+            var json = DescriptionMap();
+            DescriptionOverrides(json)["desc"] = value;
+            Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), "Map desc requires text or null");
+        }
+        foreach (var malformed in new JsonNode[] { JsonValue.Create(true)!, new JsonArray("text") }) {
+            var json = DescriptionMap();
+            DescriptionOverrides(json)["desc"] = malformed;
+            Throws(() => CompiledProject.Parse(json.ToJsonString()), "map cell o.desc has an invalid tagged value");
+        }
+        var wrongDefault = DescriptionMap();
+        wrongDefault["Types"]![TypeId(wrongDefault, "/obj/described_item")]!["Variables"]!["desc"] = 37;
+        using var failed = new DmStartupSession(CompiledProject.Parse(wrongDefault.ToJsonString()));
+        Check(failed.Advance() is null, "A partially constructed world was published.");
+        Throws(() => failed.Advance(), "Map desc requires text or null");
+        StartupError<InvalidOperationException>(() => failed.Advance());
+
+        var constant = DescriptionMap();
+        constant["Types"]![TypeId(constant, "/obj/described_item")]!["ConstVariables"] = new JsonArray("desc");
+        Throws(() => new DmStartupSession(CompiledProject.Parse(constant.ToJsonString())), "const field override");
+        var mixed = DescriptionMap();
+        var turf = TypeId(mixed, "/turf");
+        mixed["Types"]![turf]!["Parent"] = TypeId(mixed, "/atom/movable");
+        mixed["Maps"]![0]!["CellDefinitions"]!["o"]!["Objects"]![0]!["Type"] = turf;
+        Throws(() => new DmStartupSession(CompiledProject.Parse(mixed.ToJsonString())), "declared desc on a mapped movable atom");
+        var adjacent = DescriptionMap();
+        DescriptionOverrides(adjacent)["suffix"] = "unimplemented";
+        Throws(() => new DmStartupSession(CompiledProject.Parse(adjacent.ToJsonString())), "native field override is not implemented");
+    }));
+
+    tests.Add(($"mapped desc rejects malformed compiler strings in overrides and inherited defaults: {artifact}", () => {
+        foreach (var inherited in new[] { false, true }) {
+            var json = DescriptionMap();
+            var owner = inherited ? json["Types"]![TypeId(json, "/obj/described_item")]!["Variables"]! : DescriptionOverrides(json);
+            owner["desc"] = "BAD_DESCRIPTION_ESCAPE";
+            var malformed = json.ToJsonString().Replace("\"BAD_DESCRIPTION_ESCAPE\"", "\"\\uD800\"", StringComparison.Ordinal);
+            Throws(() => new DmStartupSession(CompiledProject.Parse(malformed)), "Malformed compiler text");
+        }
+    }));
+
+    tests.Add(($"mapped desc meters override bytes and first dictionary copy and honors cancellation: {artifact}", () => {
+        var oversized = DescriptionMap();
+        DescriptionOverrides(oversized)["desc"] = new string('d', DmRuntime.DefaultInstructionBudget);
+        Throws(() => new DmStartupSession(CompiledProject.Parse(oversized.ToJsonString())), "Map desc work budget exhausted");
+        var expensiveCopy = DescriptionMap();
+        expensiveCopy["Types"]![TypeId(expensiveCopy, "/obj/described_item")]!["Variables"]![new string('f', DmRuntime.DefaultInstructionBudget)] = null;
+        Throws(() => new DmStartupSession(CompiledProject.Parse(expensiveCopy.ToJsonString())), "Map desc work budget exhausted");
+        using var token = new CancellationTokenSource();
+        using var cancelled = new DmStartupSession(CompiledProject.Parse(DescriptionMap().ToJsonString()), cancellationToken: token.Token);
+        token.Cancel();
+        StartupError<OperationCanceledException>(() => cancelled.Advance());
+        StartupError<InvalidOperationException>(() => cancelled.Advance());
+    }));
+
     JsonNode VisibilityMap() {
         var json = JsonNode.Parse(File.ReadAllText(artifact))!;
         json["Maps"]![0]!["Blocks"]![0]!["Cells"] = new JsonArray("l", "m", "n", "l", "m", "n", "n");

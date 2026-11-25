@@ -16,6 +16,11 @@
 "m" = (/obj/visibility_sign/child{invisibility = 0},/turf/plain,/area/plain)
 "n" = (/obj/visibility_sign/child,/turf/plain,/area/plain)
 
+"o" = (/obj/described_item/child{desc = "<b>café</b> &amp; 🌈"},/turf/plain,/area/plain)
+"p" = (/obj/described_item/child{desc = ""},/turf/plain,/area/plain)
+"q" = (/obj/described_item/child{desc = null},/turf/plain,/area/plain)
+"r" = (/obj/described_item/child,/turf/plain,/area/plain)
+
 (1,1,1) = {"
 abcdefg
 "}

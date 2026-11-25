@@ -42,9 +42,68 @@ var/global/materials = 13
 
 /turf/initialized_child/identity_matrix
     transform = matrix()
+    var/list/transform_at_new
+    New()
+        transform_at_new = matrix_coefficients(transform)
 
 /turf/initialized_child/translated_matrix
+    parent_type = /turf/initialized_child/identity_matrix
     transform = matrix(1, 0, -4, 0, 1, -4)
+
+/turf/initialized_child/bad_matrix
+    transform = matrix(1, 0, "text", 0, 1, -4)
+
+/turf/initialized_child/list_transform
+    transform = list(1)
+
+/turf/initialized_child/matrix_to_user_field
+    var/value = matrix()
+
+var/global/matrix_result = 17
+var/global/matrix_new_count = 0
+
+/matrix
+    var/matrix_label = "default"
+
+/matrix/with_list
+    var/list/entries = list(1)
+
+/matrix/New()
+    matrix_new_count = matrix_new_count + 1
+    return ..()
+
+/proc/matrix_coefficients(matrix/m)
+    return list(m.a, m.b, m.c, m.d, m.e, m.f)
+
+/proc/matrix_identity()
+    matrix_result = matrix()
+
+/proc/matrix_six(a, b, c, d, e, f)
+    matrix_result = matrix(a, b, c, d, e, f)
+
+/proc/matrix_one(value)
+    matrix_result = matrix(value)
+
+/proc/matrix_new_explicit()
+    matrix_result = new /matrix(2, -3, 5, -7, 11, -13)
+
+/proc/matrix_output(value)
+    world << value
+
+/proc/matrix_report(matrix/value)
+    matrix_result = matrix_coefficients(value)
+
+/proc/matrix_change_label(matrix/value, label)
+    value.matrix_label = label
+
+/proc/matrix_change_c(matrix/value, number)
+    value.c = number
+
+/proc/matrix_store(atom/owner, value)
+    owner.transform = value
+
+/proc/matrix_read(atom/owner)
+    matrix_result = owner.transform
 
 /turf/initialized_child/ordinary_key
     var/key = list(5)

@@ -8,7 +8,7 @@ namespace DmGodot.Runtime;
 /// Experimental single-threaded DM execution core. Time is virtual deciseconds.
 /// Unsupported operations fail at their DM source location; they are never silently skipped.
 /// </summary>
-public sealed class DmRuntime {
+public sealed partial class DmRuntime {
     public CompiledProject Project { get; }
     public double Time { get; private set; }
     public int Width { get; private set; }
@@ -416,7 +416,7 @@ public sealed class DmRuntime {
     }
 
     private sealed record TurfInitializerPlan(Procedure Entry, HashSet<string> Writes,
-        HashSet<string> ConstFields, long InstanceWork, long MaterializationWork);
+        HashSet<string> ConstFields, bool WritesVariables, long InstanceWork, long MaterializationWork);
 
     private void ReserveTurfFieldCopy(IEnumerable<string>? names, int count) {
         ChargeTurfWork(1L + count);
@@ -440,8 +440,8 @@ public sealed class DmRuntime {
                 plan = ValidateTurfInitializer(turf, defaults.Variables);
                 plans.Add(typeId, plan);
             }
-            // The first instance write also copies the inherited dictionary, including metadata.
-            var materialization = plan.Writes.Count > 0 || overrides is { Count: > 0 } ? plan.MaterializationWork : 0;
+            // Ordinary writes copy inherited fields. Transform uses its own per-atom storage.
+            var materialization = plan.WritesVariables || overrides is { Count: > 0 } ? plan.MaterializationWork : 0;
             ChargeTurfWork(plan.InstanceWork + materialization);
         }
         foreach (var (name, value) in overrides ?? []) {
@@ -465,17 +465,20 @@ public sealed class DmRuntime {
         return turf;
     }
 
-    // Each body calls its compiler super first, then assigns complete literal expressions.
+    // Each body calls its compiler super first, then assigns complete supported expressions.
     // Validate all bodies against the concrete leaf before executing any part of the chain.
     private TurfInitializerPlan ValidateTurfInitializer(DmObject turf, IReadOnlyDictionary<string, DmValue> defaults) {
         var bodies = new Stack<Procedure>();
         var constFields = new HashSet<string>(StringComparer.Ordinal);
         var writes = new HashSet<string>(StringComparer.Ordinal);
+        var writesVariables = false;
+        var isAtom = false;
         var depth = 0;
         for (int? id = turf.TypeId; id is int typeId; id = Data.Types[typeId].Parent) {
             ChargeTurfWork(1);
             if (++depth > 256) throw new CompatibilityException("Turf initializer inheritance limit exceeded.");
             var type = Data.Types[typeId];
+            isAtom |= type.Path == "/atom";
             if (type.Path is "/atom/movable" or "/mob")
                 throw new CompatibilityException($"Turf initializer has incompatible builtin ancestor {type.Path}.");
             if (type.ConstVariables is not null)
@@ -506,7 +509,9 @@ public sealed class DmRuntime {
                 reader.Byte() != 0 || reader.Int() != 0)
                 throw FaultAt(0, "must begin with an argument-free super call");
             // The header's implicit result cannot be consumed as a literal or used for a write.
-            // Type IDs distinguish the one supported associative key from other literal values.
+            // Nonnegative operands are literal type IDs. Only literal finite numbers may
+            // feed a matrix call, and its result must go directly to src.transform.
+            const int literal = -1, finiteNumber = -2, matrixResult = -3;
             var operands = new List<int>();
             var needsPop = false;
             while (reader.Position < reader.Length) {
@@ -518,11 +523,15 @@ public sealed class DmRuntime {
                     needsPop = false;
                     continue;
                 }
+                if (operands.Count == 1 && operands[0] == matrixResult &&
+                    op is not (DreamProcOpcode.Assign or DreamProcOpcode.AssignNoPush))
+                    throw FaultAt(offset, "must assign the matrix result directly to transform");
                 switch (op) {
-                    case DreamProcOpcode.PushNull: operands.Add(-1); break;
-                    case DreamProcOpcode.PushFloat: reader.Float(); operands.Add(-1); break;
+                    case DreamProcOpcode.PushNull: operands.Add(literal); break;
+                    case DreamProcOpcode.PushFloat:
+                        operands.Add(float.IsFinite(reader.Float()) ? finiteNumber : literal); break;
                     case DreamProcOpcode.PushString: case DreamProcOpcode.PushResource:
-                        Project.String(reader.Int()); operands.Add(-1); break;
+                        Project.String(reader.Int()); operands.Add(literal); break;
                     case DreamProcOpcode.PushType:
                         var typeId = reader.Int();
                         if ((uint)typeId >= (uint)Data.Types.Length) throw FaultAt(offset, "uses an invalid type literal");
@@ -535,11 +544,12 @@ public sealed class DmRuntime {
                         var push = op is DreamProcOpcode.PushNFloats or DreamProcOpcode.PushNStrings;
                         for (var i = 0; i < count; i++) {
                             _startupCancellation.ThrowIfCancellationRequested();
+                            var operand = literal;
                             if (op is DreamProcOpcode.PushNStrings or DreamProcOpcode.CreateListNStrings) Project.String(reader.Int());
-                            else reader.Float();
-                            if (push) operands.Add(-1);
+                            else if (float.IsFinite(reader.Float())) operand = finiteNumber;
+                            if (push) operands.Add(operand);
                         }
-                        if (!push) operands.Add(-1);
+                        if (!push) operands.Add(literal);
                         break;
                     }
                     case DreamProcOpcode.CreateList: {
@@ -547,7 +557,7 @@ public sealed class DmRuntime {
                         if (count < 0 || count > 256 || count > operands.Count)
                             throw FaultAt(offset, "list literal count is invalid or exceeds 256");
                         operands.RemoveRange(operands.Count - count, count);
-                        operands.Add(-1);
+                        operands.Add(literal);
                         break;
                     }
                     case DreamProcOpcode.CreateAssociativeList:
@@ -555,24 +565,40 @@ public sealed class DmRuntime {
                             throw FaultAt(offset, "supports only one type-literal associative key");
                         instanceWork += Data.Types[operands[^2]].Path.Length;
                         operands.RemoveRange(operands.Count - 2, 2);
-                        operands.Add(-1); break;
+                        operands.Add(literal); break;
                     case DreamProcOpcode.Assign: case DreamProcOpcode.AssignNoPush: {
                         var target = reader.Reference();
                         if (operands.Count != 1 || target.Kind != 13)
                             throw FaultAt(offset, "must assign exactly one literal to an own user field");
                         var name = Project.String(target.Value);
                         ChargeTurfWork(1L + name.Length + depth);
+                        if (operands[0] == matrixResult && name != "transform")
+                            throw FaultAt(offset, "must assign the matrix result directly to transform");
+                        var matrixTransform = operands[0] == matrixResult;
+                        if (matrixTransform && (!isAtom || !defaults.TryGetValue(name, out var raw) || !raw.IsNull))
+                            throw FaultAt(offset, "requires a declared null transform on an atom");
                         if (!turf.HasVariable(name) || constFields.Contains(name) ||
-                            ProtectedAtomField(name) || name is "type" or "parent_type" or "vars" or "tag")
+                            (ProtectedAtomField(name) && !matrixTransform) || name is "type" or "parent_type" or "vars" or "tag")
                             throw FaultAt(offset, $"cannot assign native, const, metadata or unknown field '{name}'");
                         instanceWork += 1L + name.Length;
                         writes.Add(name);
+                        writesVariables |= !matrixTransform;
                         operands.Clear();
                         needsPop = op == DreamProcOpcode.Assign;
                         break;
                     }
                     case DreamProcOpcode.Call:
                         var reference = reader.Reference();
+                        if (reference.Kind == 11 && reference.Value >= 0 && reference.Value == Project.NativeMatrixProcId) {
+                            var mode = reader.Byte();
+                            var count = reader.Int();
+                            if (!IsMatrixCallShape(mode, count) || operands.Count != count ||
+                                !operands.TrueForAll(value => value == finiteNumber))
+                                throw FaultAt(offset, "matrix requires zero arguments or six finite numeric literals");
+                            operands.Clear();
+                            operands.Add(matrixResult);
+                            break;
+                        }
                         var callee = reference.Kind == 11 && (uint)reference.Value < (uint)Data.Procs.Length
                             ? Data.Procs[reference.Value].Name : "indirect or repeated super";
                         throw FaultAt(offset, $"call '{callee}' is not implemented");
@@ -589,7 +615,7 @@ public sealed class DmRuntime {
             _startupCancellation.ThrowIfCancellationRequested();
             materializationWork += name.Length;
         }
-        return new TurfInitializerPlan(entry!, writes, constFields, instanceWork, materializationWork);
+        return new TurfInitializerPlan(entry!, writes, constFields, writesVariables, instanceWork, materializationWork);
     }
 
     private static DmValue TurfLayer(DmObject turf) {
@@ -908,7 +934,17 @@ public sealed class DmRuntime {
                     case DreamProcOpcode.OutputReference: { var reference = frame.Reader.Reference(); var value = frame.Pop(); Output(Get(frame, reference), value); break; }
                     case DreamProcOpcode.Output: { var value = frame.Pop(); Output(frame.Pop(), value); break; }
                     case DreamProcOpcode.Call: {
-                        var reference = frame.Reader.Reference(); var args = Arguments(frame);
+                        var reference = frame.Reader.Reference();
+                        if (reference.Kind == 11 && reference.Value >= 0 && reference.Value == Project.NativeMatrixProcId) {
+                            var mode = frame.Reader.Byte();
+                            var count = frame.Reader.Int();
+                            if (!IsMatrixCallShape(mode, count))
+                                throw new CompatibilityException("matrix requires zero or six positional finite numbers.");
+                            MatrixWork(1 + count); // Reserve bounded argument copies before popping.
+                            frame.Push(new DmValue(NewMatrix(Arguments(frame, mode, count))));
+                            break;
+                        }
+                        var args = Arguments(frame);
                         Procedure? proc; DmObject? src = frame.Src;
                         switch (reference.Kind) {
                             case 2: proc = frame.Proc; break;
@@ -1541,6 +1577,7 @@ public sealed class DmRuntime {
             throw new CompatibilityException($"alist.{name} is not implemented.");
         }
         if (owner.Value is not DmObject obj) throw new CompatibilityException($"Cannot read field '{name}' on this value.");
+        if (name == "transform" && HasNativeTransform(obj)) return new DmValue(ReadTransform(obj));
         if (ReferenceEquals(obj, World)) {
             if (BuiltinWorldFields.Contains(name) && !ReadableWorldFields.Contains(name))
                 throw new CompatibilityException($"world.{name} is not implemented.");
@@ -1619,6 +1656,9 @@ public sealed class DmRuntime {
     private void SetField(DmValue owner, string name, DmValue value) {
         if (owner.Value is DmAssocList) throw new CompatibilityException($"Mutation of alist.{name} is not implemented.");
         if (owner.Value is not DmObject obj || !obj.HasVariable(name)) throw new CompatibilityException($"Cannot assign field '{name}'.");
+        if (name == "transform" && HasNativeTransform(obj)) { WriteTransform(obj, value); return; }
+        if (obj.IsNativeMatrix && name is "a" or "b" or "c" or "d" or "e" or "f")
+            FiniteCoefficient(value);
         if (_mapLocations.ContainsKey(obj) && ProtectedMapField(obj, name))
             throw new CompatibilityException($"Mutation of map atom.{name} is not implemented.");
         if (ReferenceEquals(obj, World) && BuiltinWorldFields.Contains(name)) throw new CompatibilityException($"Mutation of world.{name} is not implemented.");

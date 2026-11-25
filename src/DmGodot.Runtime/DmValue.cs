@@ -11,7 +11,9 @@ public readonly record struct DmValue(object? Value) {
     public float Number => Value switch { null => 0, float n => n, _ => throw new CompatibilityException($"Expected a DM number, got {Value?.GetType().Name}.") };
     public override string ToString() => Value switch {
         null => "", float n => n.ToString("G9", CultureInfo.InvariantCulture), string s => s,
-        DmTypeReference t => t.Path, DmResource r => r.Path, DmObject o => o.TryGetVariable("name", out var n) && !n.IsNull ? n.ToString() : o.TypePath,
+        DmTypeReference t => t.Path, DmResource r => r.Path,
+        DmObject { IsNativeMatrix: true } => throw new CompatibilityException("Matrix stringification is not implemented."),
+        DmObject o => o.TryGetVariable("name", out var n) && !n.IsNull ? n.ToString() : o.TypePath,
         DmList => throw new CompatibilityException("List stringification is not implemented."),
         DmAssocList => throw new CompatibilityException("Strict associative list stringification is not implemented."),
         _ => throw new CompatibilityException($"Unsupported DM value {Value.GetType().Name}.")
@@ -23,6 +25,7 @@ public readonly record struct DmValue(object? Value) {
 public sealed record DmTypeReference(int Id, string Path);
 public sealed record DmResource(string Path);
 public sealed class DmObject {
+    internal bool IsNativeMatrix { get; private init; }
     public int TypeId { get; }
     public string TypePath { get; }
     private Dictionary<string, DmValue>? _variables;
@@ -45,6 +48,9 @@ public sealed class DmObject {
         _type = type;
         _parentType = parentType;
     }
+    internal static DmObject CreateNativeMatrix(int id, IReadOnlyDictionary<string, DmValue> defaults,
+        DmValue type, DmValue parentType) => new(id, "/matrix", defaults, type, parentType) { IsNativeMatrix = true };
+
     private Dictionary<string, DmValue> MaterializeVariables() {
         if (_variables is not null) return _variables;
         var defaults = _defaults!;

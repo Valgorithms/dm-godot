@@ -136,3 +136,40 @@ var/global/observed_direction
     value:dir = WEST
 /proc/initial_direction(value)
     observed_direction = initial(value:dir)
+
+/obj/offset_marker
+    var/birth_px
+    var/birth_py
+    var/birth_x
+    var/birth_y
+    var/birth_z
+    var/birth_turf
+    var/where_matches
+    New(where)
+        birth_px = pixel_x
+        birth_py = pixel_y
+        birth_x = x
+        birth_y = y
+        birth_z = z
+        birth_turf = loc
+        where_matches = (loc == where)
+
+/obj/offset_marker/shifted
+    pixel_x = 13.75
+    pixel_y = -11.25
+
+/obj/offset_marker/shifted/child
+
+var/global/observed_px
+var/global/observed_py
+/proc/read_offsets(value)
+    observed_px = value:pixel_x
+    observed_py = value:pixel_y
+/proc/write_offset_x(value)
+    value:pixel_x = 7
+/proc/write_offset_y(value)
+    value:pixel_y = 7
+/proc/read_offset_y(value)
+    observed_py = value:pixel_y
+/proc/initial_offset(value)
+    observed_px = initial(value:pixel_x)

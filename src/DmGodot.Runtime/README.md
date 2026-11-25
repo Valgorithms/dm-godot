@@ -19,11 +19,18 @@ revision and opcode hash are checked separately by the build tooling and loader.
   prototypes of the same type share an area object. `MapCells` exposes these identities.
   DM reads of `loc` and coordinates use retained metadata, and instance methods can
   retain ordinary user-variable state. Diagnostic records remain separate snapshots.
-- Applies per-cell turf overrides after inherited constant defaults, preserving separate
-  instance values and immutable project definitions. The supported order is inherited
-  constants, map overrides, then New; executable turf initializers remain rejected,
-  including inherited ones. This does not implement general override/init/retype phases. Turf `name` accepts supported raw
-  compiler values; DM `.name` reads preserve strings (including empty/formatting text)
+- Validates mapped turf initializers once per concrete type. A compiler-generated
+  super call initializes ancestor fields before descendant fields. Initializers can
+  assign literal values, positional lists and single-entry lists keyed by a literal
+  type to declared user fields. Each cell gets fresh lists, including nested lists.
+  Positional list creation and packed literal instructions accept up to 256 entries
+  apiece. Calls such as `matrix()`, reads, yields and writes to native fields fail
+  explicitly. Disjoint DMM overrides are visible to turf `New()`. An override
+  targeting an initializer assignment is rejected because the evaluation order
+  for a shadowed assignment has not been established.
+  Validation, copying inherited fields and executing bytecode share the finite
+  constructor work allowance. List allocations use the existing slot limit.
+- Turf `name` accepts supported raw compiler values. DM `.name` reads preserve strings (including empty/formatting text)
   and normalize nonstrings to empty, matching the pinned native setter. Raw values stay
   intact. Name writes and object stringification remain unsupported. Unknown override
   fields fail explicitly (upstream ignores them); metadata/tag/native fields other than
@@ -214,13 +221,14 @@ python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/map-new.dme --ou
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/area-init.dme --output build/area-init.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/area-init.dme --output build/area-init-optimized.json --optimize
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/turf-name.dme --output build/turf-name.json
+python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/turf-name.dme --output build/turf-name-optimized.json --optimize
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/movable-init.dme --output build/movable-init.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/movable-init.dme --output build/movable-init-optimized.json --optimize
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/alist.dme --output build/alist.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/alist.dme --output build/alist-optimized.json --optimize
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/entity-overrides.dme --output build/entity-overrides.json
 python3 scripts/compile.py tests/DmGodot.Runtime.Tests/Fixtures/entity-overrides.dme --output build/entity-overrides-optimized.json --optimize
-dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json build/area-init.json build/area-init-optimized.json build/turf-name.json build/movable-init.json build/movable-init-optimized.json build/alist.json build/alist-optimized.json build/entity-overrides.json build/entity-overrides-optimized.json
+dotnet run --project tests/DmGodot.Runtime.Tests -- build/smoke.json build/semantics.json build/semantics-optimized.json build/map-new.json build/area-init.json build/area-init-optimized.json build/turf-name.json build/movable-init.json build/movable-init-optimized.json build/alist.json build/alist-optimized.json build/entity-overrides.json build/entity-overrides-optimized.json build/turf-name-optimized.json
 ```
 
 Tests exercise code emitted by the real compiler, scheduler interactions, map

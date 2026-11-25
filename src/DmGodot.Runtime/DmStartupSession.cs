@@ -1,5 +1,8 @@
 namespace DmGodot.Runtime;
 
+/// <summary>Admitted work units in one global-initializer step and the remaining cumulative allowance.</summary>
+public readonly record struct DmGlobalWork(int StepSpent, int Remaining);
+
 /// <summary>Owns a fresh runtime until global initialization, map callbacks, world.New
 /// and the initial deferred work have completed. Dispose an abandoned session.</summary>
 public sealed class DmStartupSession : IDisposable {
@@ -8,6 +11,12 @@ public sealed class DmStartupSession : IDisposable {
     private CancellationToken _cancellation;
     private CancellationTokenRegistration _registration;
     private bool _initializedGlobals;
+    private DmGlobalWork? _globalWork;
+
+    /// <summary>The most recent global-initializer step, including a faulted step. Null before the first step.</summary>
+    public DmGlobalWork? GlobalWork {
+        get { lock (_gate) return _globalWork; }
+    }
 
     // Scalar diagnostics from the last completed advance, including a failed advance.
     public int LogCount { get; private set; }
@@ -67,6 +76,7 @@ public sealed class DmStartupSession : IDisposable {
             throw;
         } finally {
             if (runtime is not null) {
+                _globalWork = runtime.LastGlobalWork;
                 LogCount = runtime.Logs.Count;
                 PendingThreads = runtime.PendingThreads;
             }

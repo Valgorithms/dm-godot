@@ -63,6 +63,7 @@ public sealed class DmRuntime {
     private Fiber? _parkedGlobalInitializer;
     private CancellationToken _startupCancellation;
     private int _budget;
+    internal DmGlobalWork? LastGlobalWork { get; private set; }
     // Bound constructor work as well as bytecode dispatch: one dimension opcode can
     // otherwise allocate an unbounded graph. Reset only at public execution boundaries.
     private const int ListAllocationLimit = 100_000;
@@ -133,17 +134,24 @@ public sealed class DmRuntime {
             _budget = InstructionBudget;
             _listAllocationRemaining = ListAllocationLimit;
             _splitTextOutputBytesRemaining = SplitTextOutputByteLimit;
-            if (Data.GlobalInitProc is { } init) fiber = new Fiber(new Frame(init, null, []));
         }
-        if (fiber is not null) {
-            if (!ExecuteDispatches(fiber, ref maxDispatches)) {
-                _parkedGlobalInitializer = fiber;
-                return false;
+        var startingWork = Math.Max(0, _budget);
+        try {
+            if (fiber is null && Data.GlobalInitProc is { } init) fiber = new Fiber(new Frame(init, null, []));
+            if (fiber is not null) {
+                if (!ExecuteDispatches(fiber, ref maxDispatches)) {
+                    _parkedGlobalInitializer = fiber;
+                    return false;
+                }
+                if (fiber.Frames.Count > 0) throw new CompatibilityException("A yielding global initializer is not supported.");
             }
-            if (fiber.Frames.Count > 0) throw new CompatibilityException("A yielding global initializer is not supported.");
+            _startupCancellation.ThrowIfCancellationRequested();
+            return true;
+        } finally {
+            // The dispatch guard decrements before rejecting an exhausted budget.
+            var remaining = Math.Clamp(_budget, 0, startingWork);
+            LastGlobalWork = new DmGlobalWork(startingWork - remaining, remaining);
         }
-        _startupCancellation.ThrowIfCancellationRequested();
-        return true;
     }
 
     internal void FinishBoot() {

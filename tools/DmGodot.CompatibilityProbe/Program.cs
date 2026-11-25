@@ -13,6 +13,7 @@ string? inventoryHash = null;
 Exception? failure = null;
 int? pendingThreads = null;
 int? logCount = null;
+DmGlobalWork? globalWork = null;
 var elapsed = Stopwatch.StartNew();
 var exitCode = 1;
 try {
@@ -158,6 +159,7 @@ try {
         status = "boot_returned";
         exitCode = 0;
     } finally {
+        globalWork = session.GlobalWork;
         pendingThreads = session.PendingThreads;
         logCount = session.LogCount;
     }
@@ -194,6 +196,8 @@ Console.WriteLine(JsonSerializer.Serialize(new {
     artifact_sha256 = artifactHash,
     file_inventory_sha256 = inventoryHash,
     instruction_budget = DmRuntime.DefaultInstructionBudget,
+    global_step_work = globalWork?.StepSpent,
+    global_work_remaining = globalWork?.Remaining,
     configured_gc_heap_hard_limit = Environment.GetEnvironmentVariable("DOTNET_GCHeapHardLimit"),
     gc_total_available_memory_bytes = gcAvailable,
     gc_heap_size_bytes_last_collection = gcHeap,

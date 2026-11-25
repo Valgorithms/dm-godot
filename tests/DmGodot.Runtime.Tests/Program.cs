@@ -181,6 +181,52 @@ tests.Add(("startup publishes the fully booted runtime once and preserves direct
     Check(session.LogCount == 3 && session.PendingThreads == 1, "Session diagnostics changed after handoff.");
 }));
 
+tests.Add(("global work includes native charges and is conserved across dispatch slices", () => {
+    var project = StartupProject(semanticsPath);
+    using var oneShot = new DmStartupSession(project, startupInventory, startupText);
+    Check(oneShot.GlobalWork is null && oneShot.Advance() is null, "Expected an unstarted session and a globals-only first advance.");
+    var reference = oneShot.GlobalWork ?? throw new Exception("One-shot global work was not reported.");
+    var direct = oneShot.Advance() ?? throw new Exception("The reference world did not finish boot.");
+    foreach (var quota in new[] { 1, 17, 256 }) {
+        using var session = new DmStartupSession(project, startupInventory, startupText);
+        var remaining = DmRuntime.DefaultInstructionBudget;
+        var total = 0;
+        var largestStep = 0;
+        bool complete;
+        do {
+            complete = session.AdvanceGlobals(quota);
+            var work = session.GlobalWork ?? throw new Exception("Missing executed step.");
+            Check(work.StepSpent > 0 && work.Remaining >= 0 && remaining - work.StepSpent == work.Remaining,
+                "Charged global work was lost or counted twice.");
+            remaining = work.Remaining;
+            total += work.StepSpent;
+            largestStep = Math.Max(largestStep, work.StepSpent);
+        } while (!complete);
+        Check(total == reference.StepSpent && remaining == reference.Remaining,
+            "Global work changed with the dispatch slice size.");
+        if (quota == 1) Check(largestStep > 1, "file2text work was reduced to one dispatch.");
+
+        var last = session.GlobalWork;
+        Check(session.AdvanceGlobals(1) && last.Equals(session.GlobalWork), "Polling completed globals changed their work.");
+        var result = session.Advance() ?? throw new Exception("The stepped world did not finish boot.");
+        Check(result.Logs.SequenceEqual(direct.Logs) && result.GetGlobal("init_count") == direct.GetGlobal("init_count") &&
+            result.PendingThreads == direct.PendingThreads && result.Time == direct.Time, "Slicing changed startup behavior.");
+        Check(last.Equals(session.GlobalWork), "Finishing boot replaced the global work report.");
+        session.Dispose();
+        StartupError<InvalidOperationException>(() => session.AdvanceGlobals(1));
+        Check(last.Equals(session.GlobalWork), "Closing a session replaced the global work report.");
+    }
+}));
+
+tests.Add(("an absent global initializer reports zero work on its first advance", () => {
+    var json = JsonNode.Parse(File.ReadAllText(semanticsPath))!;
+    json["GlobalInitProc"] = null;
+    using var session = new DmStartupSession(CompiledProject.Parse(json.ToJsonString()));
+    Check(session.GlobalWork is null, "Global work was reported before advancing.");
+    Check(session.AdvanceGlobals(1) && session.GlobalWork is { StepSpent: 0, Remaining: DmRuntime.DefaultInstructionBudget },
+        "An empty global phase charged work or failed to report a completed step.");
+}));
+
 tests.Add(("two startup callers can transfer the runtime only once", () => {
     using var session = new DmStartupSession(StartupProject(semanticsPath), startupInventory, startupText);
     Check(session.Advance() is null, "First step published a runtime.");
@@ -336,6 +382,7 @@ tests.Add(("partial global initialization can be cancelled or disposed between d
         using var session = new DmStartupSession(project, cancellationToken: token.Token);
         for (int i = 0; i < 3; i++) Check(!session.AdvanceGlobals(1), "Expected a partially executed initializer.");
         int logs = session.LogCount, pending = session.PendingThreads;
+        var lastWork = session.GlobalWork ?? throw new Exception("Missing parked global work.");
         if (dispose) session.Dispose();
         else {
             token.Cancel();
@@ -343,6 +390,7 @@ tests.Add(("partial global initialization can be cancelled or disposed between d
         }
         StartupError<InvalidOperationException>(() => session.Advance());
         Check(session.LogCount == logs && session.PendingThreads == pending, "Terminated partial globals executed more work.");
+        Check(lastWork.Equals(session.GlobalWork), "Discarding partial globals replaced the last executed step.");
     }
 }));
 
@@ -379,10 +427,13 @@ tests.Add(("stepping a non-yielding initializer retains the single 100000-dispat
     var direct = new DmRuntime(project);
     var reference = StartupError<CompatibilityException>(direct.Boot);
     using var session = new DmStartupSession(project);
-    for (var i = 0; i < 1000; i++) Check(!session.AdvanceGlobals(100), "Infinite initializer completed.");
-    var fault = StartupError<CompatibilityException>(() => session.AdvanceGlobals(1));
+    for (var i = 0; i < 999; i++) Check(!session.AdvanceGlobals(100), "Infinite initializer completed.");
+    Check(session.GlobalWork is { StepSpent: 100, Remaining: 100 }, "Global work did not carry across slices.");
+    var fault = StartupError<CompatibilityException>(() => session.AdvanceGlobals(101));
     Check(fault.Message.Contains("Instruction budget exhausted") && fault.Message == reference.Message,
         "Repeated positive slices reset the original hard budget or changed its fault location.");
+    Check(session.GlobalWork is { StepSpent: 100, Remaining: 0 },
+        "A faulting advance must report its successful debits and exclude the rejected dispatch.");
     StartupError<InvalidOperationException>(() => session.AdvanceGlobals(100));
 }));
 
@@ -2749,6 +2800,13 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
         Check(((string)((DmList)runtime.GetGlobal("split_result").Value!).Values[0].Value!).Length == 300_000, "Deferred failure lost completed Boot result.");
         runtime.InvokeGlobal("test_split_default", new DmValue("ok"), new DmValue(","));
         Check(((DmList)runtime.GetGlobal("split_result").Value!).Values[0].Value is string value && value == "ok", "Next public execution did not reset split budget.");
+
+        json["GlobalInitProc"] = helper.DeepClone();
+        using var session = new DmStartupSession(CompiledProject.Parse(json.ToJsonString()));
+        Throws(() => session.Advance(), "splittext work budget");
+        Check(session.GlobalWork is { StepSpent: > 0, Remaining: > 0 } work &&
+            work.Remaining + work.StepSpent == DmRuntime.DefaultInstructionBudget,
+            "Rejecting the oversized source scan must preserve both prior dispatch charges and unspent work.");
     }));
     tests.Add(($"splittext malformed native call arity fails before empty-input handling: {artifact}", () => {
         foreach (var count in new[] { 0, 1, 6 }) {

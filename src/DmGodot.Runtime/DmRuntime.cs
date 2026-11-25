@@ -408,7 +408,9 @@ public sealed partial class DmRuntime {
                         // Validate every mapped initializer before Boot can produce effects.
                         // Execution is deferred to this instance's position in New order.
                         var snapshot = new MapEntity(x, y, block.Z, instance.TypePath) {
-                            Direction = PlacedDirection(instance, entity.VarOverrides?.ContainsKey("dir") == true, declaredDirections)
+                            Direction = PlacedDirection(instance, entity.VarOverrides?.ContainsKey("dir") == true, declaredDirections),
+                            PixelX = ReadMapPixelOffset(instance, "pixel_x"),
+                            PixelY = ReadMapPixelOffset(instance, "pixel_y")
                         };
                         _mapLocations.Add(instance, new(x, y, block.Z, turf,
                             NameOverridden: entity.VarOverrides?.ContainsKey("name") == true,
@@ -655,7 +657,7 @@ public sealed partial class DmRuntime {
     }
     private void ApplyMapEntityOverrides(DmObject instance, Dictionary<string, JsonElement>? overrides) {
         foreach (var (name, raw) in (overrides ?? []).OrderBy(pair => pair.Key, StringComparer.Ordinal)) {
-            var appearanceOverride = name is "desc" or "dir" or "icon" or "invisibility";
+            var appearanceOverride = name is "desc" or "dir" or "icon" or "invisibility" or "pixel_x" or "pixel_y";
             if (appearanceOverride)
                 ChargeMapAppearanceWork(1 + System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(raw).Length, name);
             var category = raw.ValueKind.ToString();
@@ -766,12 +768,35 @@ public sealed partial class DmRuntime {
         return direction;
     }
 
+    // BYOND uses symmetric signed limits for both axes, including at -32768.
+    private static int NormalizePixelOffset(float number) =>
+        (int)Math.Clamp(number, -32767f, 32767f);
+
+    private int ReadMapPixelOffset(DmObject obj, string name) {
+        ChargeMapAppearanceWork(1, name);
+        if (!obj.TryGetVariable(name, out var value))
+            throw new CompatibilityException($"Map {name} requires a declared {name} on a mapped movable atom.");
+        if (value.Value is not float number || !float.IsFinite(number))
+            throw new CompatibilityException($"Map {name} declaration requires a finite number.");
+        return NormalizePixelOffset(number);
+    }
+
+    private DmValue DecodeMapPixelOffset(DmObject obj, string name, JsonElement raw) {
+        // A map placement may clear either axis. A null type declaration is invalid.
+        _ = ReadMapPixelOffset(obj, name);
+        if (raw.ValueKind == JsonValueKind.Null) return 0;
+        if (raw.ValueKind != JsonValueKind.Number || !raw.TryGetSingle(out var number) || !float.IsFinite(number))
+            throw new CompatibilityException($"Map {name} requires a finite number or null.");
+        return NormalizePixelOffset(number);
+    }
+
     private void ApplyMapAppearanceOverride(DmObject obj, string name, JsonElement raw) {
         ValidateMapAppearanceOwner(obj, name, writing: true);
         var value = name switch {
             "desc" when raw.ValueKind is JsonValueKind.String or JsonValueKind.Null => ConvertValue(raw),
             "desc" => throw new CompatibilityException("Map desc requires text or null."),
             "dir" => DecodeMapDirection(obj, raw),
+            "pixel_x" or "pixel_y" => DecodeMapPixelOffset(obj, name, raw),
             "icon" => DecodeMapIcon(raw),
             "invisibility" when raw.ValueKind == JsonValueKind.Number && raw.TryGetSingle(out var number) =>
                 NormalizeMapInvisibility(new DmValue(number), declared: false),
@@ -1740,7 +1765,13 @@ public sealed partial class DmRuntime {
             if (name == "time") return (float)Time;
         }
         if (_mapLocations.TryGetValue(obj, out var location)) {
-            if (name == "dir" && location.MovableSnapshot is { } snapshot) return snapshot.Direction;
+            if (location.MovableSnapshot is { } snapshot) {
+                switch (name) {
+                    case "dir": return snapshot.Direction;
+                    case "pixel_x": return snapshot.PixelX;
+                    case "pixel_y": return snapshot.PixelY;
+                }
+            }
             // The pinned appearance setter retains strings and normalizes every
             // nonstring name to empty. Keep raw definition values untouched.
             if (IsSubtypeOf(obj.TypeId, "/turf")) {

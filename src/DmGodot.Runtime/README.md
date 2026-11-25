@@ -59,7 +59,8 @@ revision and opcode hash are checked separately by the build tooling and loader.
   overrides. Per-instance dictionaries and fresh initializer lists remain isolated,
   and shared type defaults are untouched. Optional compiler ConstVariables metadata
   is retained to reject inherited const overrides. The supported native fields are
-  name, icon_state, nullable text desc, dir, numeric invisibility and approved resource-valued icon.
+  name, icon_state, nullable text desc, dir, pixel_x, pixel_y, numeric invisibility
+  and approved resource-valued icon.
   Unknown fields, static variables, tag, type, parent_type and vars raise compatibility errors.
 - A placed movable's `New()` and its `MapEntity.Direction` construction snapshot
   report the same facing. A finite nonnegative type declaration truncates toward
@@ -69,6 +70,13 @@ revision and opcode hash are checked separately by the build tooling and loader.
   therefore retain opposing direction bits. DM writes to mapped `dir` and turf
   direction overrides remain unsupported. The diagnostic client draws only grid
   tiles and connected player markers.
+- Placed movables expose `pixel_x` and `pixel_y` in `New()` and later DM reads.
+  The map construction snapshot carries those values in `MapEntity.PixelX` and
+  `PixelY`. Finite numbers truncate toward zero and saturate at −32767 and 32767.
+  Each omitted axis inherits its type value. An explicit null in the map clears
+  that axis to zero. Type declarations require finite numbers. Pixel offsets
+  leave tile coordinates and `loc` intact. The diagnostic grid renders tiles
+  and player markers. Gameplay writes and turf offsets remain unsupported.
 - A placed movable's `New()` reads its own `desc`. An omitted map field inherits
   the type's description. An explicit null clears it, and an empty string stays
   empty. Strings preserve their text, including markup. The constructor charges
@@ -231,7 +239,7 @@ Single-z area coordinates use the lowest turf by y, then x; coordinate reads on 
 spanning multiple z levels fail explicitly because pinned upstream cross-z cache behavior
 needs separate parity investigation. Their identity and null loc remain available. Native atom/appearance, movable and mob fields beyond loc/coordinates/type metadata
 generally raise explicit errors. Supported appearance fields include static turf
-name/layer, static movable name/desc/dir/icon_state/invisibility, approved movable icon reads, and the
+name/layer, static movable name/desc/dir/icon_state/invisibility and pixel offsets, approved movable icon reads, and the
 bounded atom transform subset. Contents, color, bounds and connection/vision
 field access remain unsupported.
 This avoids exposing unnormalized compiler defaults as runtime behavior. Mutation of

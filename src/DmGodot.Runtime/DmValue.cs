@@ -114,6 +114,8 @@ public sealed record WorldTile(int X, int Y, int Z, bool Density, string Type, s
 public sealed record MapEntity(int X, int Y, int Z, string Type) {
     internal const int South = 2;
     public int Direction { get; init; } = South;
+    public int PixelX { get; init; }
+    public int PixelY { get; init; }
 }
 public sealed record RuntimeLog(double Time, string Text);
 

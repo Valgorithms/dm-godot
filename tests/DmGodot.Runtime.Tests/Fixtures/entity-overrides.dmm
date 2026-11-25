@@ -27,6 +27,15 @@
 "v" = (/obj/direction_marker,/turf/plain,/area/plain)
 "w" = (/obj/direction_marker/angled/child{dir = 0},/turf/plain,/area/plain)
 
+"0" = (/obj/offset_marker/shifted/child{pixel_y = 8; pixel_x = 4},/obj/offset_marker/shifted/child,/turf/plain,/area/plain)
+"1" = (/obj/offset_marker/shifted/child{pixel_x = -7},/turf/plain,/area/plain)
+"2" = (/obj/offset_marker/shifted/child{pixel_y = 3},/turf/plain,/area/plain)
+"3" = (/obj/offset_marker/shifted/child{pixel_x = null; pixel_y = null},/turf/plain,/area/plain)
+"4" = (/obj/offset_marker,/turf/plain,/area/plain)
+"5" = (/obj/offset_marker/shifted/child{pixel_x = null; pixel_y = -12},/turf/plain,/area/plain)
+"6" = (/obj/offset_marker/shifted/child{pixel_y = null; pixel_x = 6},/turf/plain,/area/plain)
+"7" = (/obj/offset_marker/shifted/child{pixel_x = 4.5; pixel_y = -3.25},/turf/plain,/area/plain)
+
 (1,1,1) = {"
 abcdefg
 "}

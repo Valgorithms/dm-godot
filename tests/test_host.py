@@ -50,6 +50,7 @@ class HostTests(unittest.TestCase):
         self.assertEqual(hidden["VarOverrides"]["invisibility"], 100)
         self.assertEqual(hidden["VarOverrides"]["desc"], "<i>survey marker</i>")
         self.assertEqual(hidden["VarOverrides"]["dir"], 8)
+        self.assertEqual((hidden["VarOverrides"]["pixel_x"], hidden["VarOverrides"]["pixel_y"]), (37, -19))
         first = self.connect()
         first_state = first.join("First")
         self.assertEqual(position(first_state, first.id), (2, 2, 1))

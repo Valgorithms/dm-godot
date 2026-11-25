@@ -2558,6 +2558,154 @@ foreach (var artifact in new[] { alistPath, alistOptimizedPath }) {
 var entityOverridePath = args.Length > 11 ? args[11] : "build/entity-overrides.json";
 var entityOverrideOptimizedPath = args.Length > 12 ? args[12] : "build/entity-overrides-optimized.json";
 foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath }) {
+    JsonNode OffsetMap() {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var map = json["Maps"]![0]!;
+        map["MaxX"] = 4;
+        map["MaxY"] = 2;
+        var block = map["Blocks"]![0]!;
+        block["Width"] = 4;
+        block["Height"] = 2;
+        block["Cells"] = new JsonArray("0", "1", "2", "3", "4", "5", "6", "7");
+        return json;
+    }
+
+    tests.Add(($"mapped pixel offsets agree in New, later reads and entity snapshots without shifting tile coordinates: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Parse(OffsetMap().ToJsonString()));
+        // DMM order runs across the upper row first. Cell "0" contains an
+        // overridden marker next to an unmodified same-type peer.
+        (int X, int Y, int Px, int Py)[] expected = [
+            (1, 2, 4, 8), (1, 2, 13, -11), (2, 2, -7, -11), (3, 2, 13, 3), (4, 2, 0, 0),
+            (1, 1, 0, 0), (2, 1, 0, -12), (3, 1, 6, 0), (4, 1, 4, -3)
+        ];
+        var entities = runtime.MapEntities;
+        var placements = runtime.MapCells.OrderByDescending(cell => cell.Y).ThenBy(cell => cell.X)
+            .SelectMany(cell => cell.Entities.Select(obj => (cell, obj))).ToArray();
+        Check(entities.Count == expected.Length && placements.Length == expected.Length &&
+            placements.Select(p => p.obj).Distinct().Count() == expected.Length &&
+            placements.All(p => p.obj.Variables["birth_px"].IsNull && p.obj.Variables["birth_py"].IsNull),
+            "Marker construction coalesced objects or invoked New early.");
+        Check(entities.Select(e => (e.X, e.Y, e.PixelX, e.PixelY)).SequenceEqual(expected) &&
+            entities.All(e => e.Z == 1) && entities.Select(e => e.Type).SequenceEqual(placements.Select(p => p.obj.TypePath)),
+            "The initial snapshot changed offset, tile, type or DMM object order.");
+        runtime.Boot();
+        for (var i = 0; i < placements.Length; i++) {
+            var (cell, obj) = placements[i];
+            var (x, y, px, py) = expected[i];
+            Check(obj.Variables["birth_px"].Value is float bx && bx == px &&
+                obj.Variables["birth_py"].Value is float by && by == py &&
+                obj.Variables["birth_x"].Number == x && obj.Variables["birth_y"].Number == y && obj.Variables["birth_z"].Number == 1 &&
+                ReferenceEquals(obj.Variables["birth_turf"].Value, cell.Turf) && obj.Variables["where_matches"].IsTruthy,
+                "New observed a different offset, tile or loc.");
+            runtime.InvokeGlobal("read_offsets", new DmValue(obj));
+            Check(runtime.GetGlobal("observed_px").Value is float rx && rx == px &&
+                runtime.GetGlobal("observed_py").Value is float ry && ry == py, "A later DM read disagreed with New.");
+        }
+        var first = new DmValue(placements[0].obj);
+        Throws(() => runtime.InvokeGlobal("write_offset_x", first), "Mutation of map atom.pixel_x");
+        Throws(() => runtime.InvokeGlobal("write_offset_y", first), "Mutation of map atom.pixel_y");
+        Throws(() => runtime.InvokeGlobal("initial_offset", first), "initial native/metadata field");
+        Throws(() => runtime.InvokeGlobal("read_offsets", new DmValue(placements[0].cell.Turf)), "Map atom.pixel_x");
+        Throws(() => runtime.InvokeGlobal("read_offset_y", new DmValue(placements[0].cell.Area)), "Map atom.pixel_y");
+        Check(entities.Select(e => (e.X, e.Y, e.PixelX, e.PixelY)).SequenceEqual(expected),
+            "A callback or rejected write changed the placement snapshot.");
+    }));
+
+    tests.Add(($"mapped pixel offsets truncate and saturate on both axes: {artifact}", () => {
+        (float Raw, int Seen)[] cases = [
+            (-0.5f, 0), (0.5f, 0), (-1.75f, -1), (1.75f, 1), (32766, 32766),
+            (32767, 32767), (-32767, -32767), (-32768, -32767), (32768, 32767),
+            (-32768.75f, -32767), (32768.75f, 32767), (float.MinValue, -32767), (float.MaxValue, 32767)
+        ];
+        var json = OffsetMap();
+        var map = json["Maps"]![0]!;
+        var definitions = map["CellDefinitions"]!;
+        var keys = new JsonArray();
+        for (var i = 0; i < cases.Length; i++) {
+            var key = "pair" + i;
+            var cell = definitions["7"]!.DeepClone();
+            var overrides = cell["Objects"]![0]!["VarOverrides"]!;
+            overrides["pixel_x"] = cases[i].Raw;
+            overrides["pixel_y"] = cases[^(i + 1)].Raw;
+            definitions[key] = cell;
+            keys.Add(key);
+        }
+        map["MaxX"] = keys.Count;
+        map["MaxY"] = 1;
+        var block = map["Blocks"]![0]!;
+        block["Width"] = keys.Count;
+        block["Height"] = 1;
+        block["Cells"] = keys;
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+        runtime.Boot();
+        for (var i = 0; i < cases.Length; i++) {
+            var seen = (cases[i].Seen, cases[^(i + 1)].Seen);
+            var entity = runtime.MapEntities[i];
+            var marker = runtime.MapCells[i].Entities[0];
+            Check((entity.PixelX, entity.PixelY) == seen &&
+                BitConverter.SingleToInt32Bits(marker.Variables["birth_px"].Number) == BitConverter.SingleToInt32Bits(seen.Item1) &&
+                BitConverter.SingleToInt32Bits(marker.Variables["birth_py"].Number) == BitConverter.SingleToInt32Bits(seen.Item2),
+                "Placed offset saturation, truncation or signed-zero handling changed.");
+        }
+
+        var declared = OffsetMap();
+        var defaults = declared["Types"]![TypeId(declared, "/obj/offset_marker/shifted")]!["Variables"]!;
+        defaults["pixel_x"] = float.MaxValue;
+        defaults["pixel_y"] = float.MinValue;
+        var inherited = new DmRuntime(CompiledProject.Parse(declared.ToJsonString()));
+        inherited.Boot();
+        // The second marker in DMM cell "0" inherits both axes from its parent type.
+        var snapshot = inherited.MapEntities[1];
+        var peer = inherited.MapCells.Single(c => c.X == 1 && c.Y == 2).Entities[1];
+        Check((snapshot.PixelX, snapshot.PixelY) == (32767, -32767) &&
+            peer.Variables["birth_px"].Number == 32767 && peer.Variables["birth_py"].Number == -32767,
+            "An inherited extreme offset disagreed between the snapshot and constructor.");
+    }));
+
+    tests.Add(($"mapped pixel offsets fail explicitly for unsupported shapes on either axis: {artifact}", () => {
+        foreach (var field in new[] { "pixel_x", "pixel_y" }) {
+            foreach (var raw in new JsonNode[] { JsonValue.Create("4")!, JsonNode.Parse("1e99")!,
+                new JsonObject { ["type"] = 0, ["resourcePath"] = "unused.dmi" },
+                new JsonObject { ["type"] = 1, ["value"] = 0 }, new JsonObject { ["type"] = 4 } }) {
+                var json = OffsetMap();
+                json["Maps"]![0]!["CellDefinitions"]!["0"]!["Objects"]![0]!["VarOverrides"]![field] = raw;
+                Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), $"Map {field} requires a finite number or null");
+            }
+            foreach (var raw in new JsonNode?[] { null, JsonValue.Create("4"), JsonNode.Parse("1e99") }) {
+                var json = OffsetMap();
+                // Cell "7" overrides both axes. A placement cannot conceal an invalid inherited declaration.
+                json["Maps"]![0]!["Blocks"]![0]!["Cells"] = new JsonArray("7", "7", "7", "7", "7", "7", "7", "7");
+                json["Types"]![TypeId(json, "/obj/offset_marker/shifted")]!["Variables"]![field] = raw;
+                Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), $"Map {field} declaration requires a finite number");
+            }
+        }
+    }));
+
+    tests.Add(($"mapped pixel offsets preserve native and const write guards and startup bounds: {artifact}", () => {
+        foreach (var field in new[] { "pixel_x", "pixel_y" }) {
+            var constant = OffsetMap();
+            constant["Types"]![TypeId(constant, "/obj/offset_marker/shifted")]!["ConstVariables"] = new JsonArray(field);
+            Throws(() => new DmStartupSession(CompiledProject.Parse(constant.ToJsonString())), "const field override");
+            var oversized = OffsetMap();
+            oversized["Maps"]![0]!["CellDefinitions"]!["0"]!["Objects"]![0]!["VarOverrides"]![field] =
+                new string('x', DmRuntime.DefaultInstructionBudget);
+            Throws(() => new DmStartupSession(CompiledProject.Parse(oversized.ToJsonString())), $"Map {field} work budget exhausted");
+        }
+        var mixed = OffsetMap();
+        var turf = TypeId(mixed, "/turf");
+        mixed["Types"]![turf]!["Parent"] = TypeId(mixed, "/atom/movable");
+        mixed["Maps"]![0]!["CellDefinitions"]!["0"]!["Objects"]![0]!["Type"] = turf;
+        Throws(() => new DmStartupSession(CompiledProject.Parse(mixed.ToJsonString())), "declared pixel_x on a mapped movable atom");
+        var adjacent = OffsetMap();
+        adjacent["Maps"]![0]!["CellDefinitions"]!["0"]!["Objects"]![0]!["VarOverrides"]!["pixel_z"] = 1;
+        Throws(() => new DmStartupSession(CompiledProject.Parse(adjacent.ToJsonString())), "native field override is not implemented");
+        using var token = new CancellationTokenSource();
+        using var cancelled = new DmStartupSession(CompiledProject.Parse(OffsetMap().ToJsonString()), cancellationToken: token.Token);
+        token.Cancel();
+        StartupError<OperationCanceledException>(() => cancelled.Advance());
+        StartupError<InvalidOperationException>(() => cancelled.Advance());
+    }));
+
     JsonNode DirectionMap() {
         var json = JsonNode.Parse(File.ReadAllText(artifact))!;
         json["Maps"]![0]!["Blocks"]![0]!["Cells"] = new JsonArray("s", "t", "u", "v", "w", "u", "v");

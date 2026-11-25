@@ -59,8 +59,15 @@ revision and opcode hash are checked separately by the build tooling and loader.
   overrides. Per-instance dictionaries and fresh initializer lists remain isolated,
   and shared type defaults are untouched. Optional compiler ConstVariables metadata
   is retained to reject inherited const overrides. The supported native fields are
-  name, icon_state and approved resource-valued icon. Unknown fields, static variables,
-  tag, type, parent_type and vars raise compatibility errors.
+  name, icon_state, numeric invisibility and approved resource-valued icon.
+  Unknown fields, static variables, tag, type, parent_type and vars raise compatibility errors.
+- A placed movable's `New()` reads its own `invisibility` map override. Finite
+  DM numbers truncate toward zero and saturate at −127 and 127. Without an
+  override, a read checks that the declared value is between 0 and 101 before
+  truncating. Sibling instances retain their own levels. Gameplay writes and
+  `see_invisible` remain unsupported. The diagnostic host sends turf records
+  and connected player markers. Mapped movables stay in the simulation and
+  are absent from client snapshots.
 - A mapped movable can override `icon` with a compiler-tagged DMI resource.
   `DmMapIconInventory` binds the exact compiler resource index and token to an
   explicitly approved regular DMI asset in the tracked game inventory. The host
@@ -210,7 +217,7 @@ Single-z area coordinates use the lowest turf by y, then x; coordinate reads on 
 spanning multiple z levels fail explicitly because pinned upstream cross-z cache behavior
 needs separate parity investigation. Their identity and null loc remain available. Native atom/appearance, movable and mob fields beyond loc/coordinates/type metadata
 generally raise explicit errors. Supported appearance fields include static turf
-name/layer, static movable name/icon_state, approved movable icon reads, and the
+name/layer, static movable name/icon_state/invisibility, approved movable icon reads, and the
 bounded atom transform subset. Contents, color, bounds and connection/vision
 field access remain unsupported.
 This avoids exposing unnormalized compiler defaults as runtime behavior. Mutation of

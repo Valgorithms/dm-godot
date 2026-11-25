@@ -2558,6 +2558,119 @@ foreach (var artifact in new[] { alistPath, alistOptimizedPath }) {
 var entityOverridePath = args.Length > 11 ? args[11] : "build/entity-overrides.json";
 var entityOverrideOptimizedPath = args.Length > 12 ? args[12] : "build/entity-overrides-optimized.json";
 foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath }) {
+    JsonNode VisibilityMap() {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        json["Maps"]![0]!["Blocks"]![0]!["Cells"] = new JsonArray("l", "m", "n", "l", "m", "n", "n");
+        return json;
+    }
+
+    tests.Add(($"mapped invisibility is visible in New and isolated per movable: {artifact}", () => {
+        var project = CompiledProject.Parse(VisibilityMap().ToJsonString());
+        var runtime = new DmRuntime(project);
+        var signs = runtime.MapCells.Select(cell => cell.Entities[0]).ToArray();
+        float[] expected = [100, 0, 7, 100, 0, 7, 7];
+        Check(signs.Select(obj => obj.Variables["invisibility"].Number).SequenceEqual(expected) &&
+            signs.All(obj => obj.Variables["seen_at_new"].IsNull), "Mapped invisibility was applied late or New ran early.");
+        runtime.Boot();
+        Check(signs.Select(obj => obj.Variables["seen_at_new"].Number).SequenceEqual(expected),
+            "Mapped New did not see each object's override or inherited default.");
+        for (var i = 0; i < signs.Length; i++) {
+            runtime.InvokeGlobal("read_invisibility", new DmValue(signs[i]));
+            Check(runtime.GetGlobal("observed_invisibility").Number == expected[i], "A mapped object's invisibility changed after New.");
+        }
+        Throws(() => runtime.InvokeGlobal("write_invisibility", new DmValue(signs[0])), "Mutation of map atom.invisibility");
+        Throws(() => runtime.InvokeGlobal("read_invisibility", new DmValue(runtime.MapCells[0].Turf)), "Map atom.invisibility");
+        Check(signs[0].Variables["invisibility"].Number == 100 && signs[2].Variables["invisibility"].Number == 7,
+            "A rejected assignment modified the sign or its sibling.");
+        using var token = new CancellationTokenSource();
+        using var cancelled = new DmStartupSession(project, cancellationToken: token.Token);
+        token.Cancel();
+        StartupError<OperationCanceledException>(() => cancelled.Advance());
+        var fresh = new DmRuntime(project);
+        Check(fresh.MapCells[2].Entities[0].Variables["invisibility"].Number == 7,
+            "An earlier construction modified a later world's inherited invisibility.");
+    }));
+
+    tests.Add(($"DMM invisibility truncates fractional values and saturates signed endpoints: {artifact}", () => {
+        // Pinned native maps truncate fractions and saturate even beyond signed 32-bit range.
+        // The largest finite float inputs also guard against overflow in the host implementation.
+        (float Raw, float Seen)[] cases = [
+            (2.75f, 2), (-2.75f, -2), (127, 127), (-127, -127), (127.75f, 127),
+            (-127.75f, -127), (128, 127), (-128, -127), (1000, 127), (1e10f, 127), (-1e10f, -127),
+            (float.MaxValue, 127), (float.MinValue, -127)
+        ];
+        var json = VisibilityMap();
+        var map = json["Maps"]![0]!;
+        var definitions = map["CellDefinitions"]!;
+        var block = map["Blocks"]![0]!;
+        var cells = new JsonArray();
+        foreach (var (raw, _) in cases) {
+            var key = "edge" + cells.Count;
+            var cell = definitions["l"]!.DeepClone();
+            cell["Objects"]![0]!["VarOverrides"]!["invisibility"] = raw;
+            definitions[key] = cell;
+            cells.Add(key);
+        }
+        cells.Add("n");
+        map["MaxX"] = cells.Count;
+        block["Width"] = cells.Count;
+        block["Cells"] = cells;
+        foreach (var (rawDefault, seenDefault) in new[] { (0f, 0f), (2.75f, 2f), (101f, 101f) }) {
+            json["Types"]![TypeId(json, "/obj/visibility_sign")]!["Variables"]!["invisibility"] = rawDefault;
+            var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+            runtime.Boot();
+            Check(runtime.MapCells.Select(cell => cell.Entities[0].Variables["seen_at_new"].Number)
+                .SequenceEqual(cases.Select(pair => pair.Seen).Append(seenDefault)),
+                "An inherited default or a mapped literal was normalized incorrectly.");
+        }
+    }));
+
+    tests.Add(($"mapped invisibility reads negative zero as positive zero: {artifact}", () => {
+        var json = VisibilityMap();
+        json["Maps"]![0]!["CellDefinitions"]!["l"]!["Objects"]![0]!["VarOverrides"]!["invisibility"] = JsonNode.Parse("-0.0");
+        json["Types"]![TypeId(json, "/obj/visibility_sign")]!["Variables"]!["invisibility"] = JsonNode.Parse("-0.0");
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+        runtime.Boot();
+        foreach (var index in new[] { 0, 2 }) {
+            var seen = runtime.MapCells[index].Entities[0].Variables["seen_at_new"].Number;
+            Check(BitConverter.SingleToInt32Bits(seen) == 0, "DM observed a signed negative zero for mapped invisibility.");
+        }
+    }));
+
+    tests.Add(($"map invisibility rejects unsupported values, const overrides and mixed roles: {artifact}", () => {
+        foreach (var value in new JsonNode?[] { null, JsonValue.Create("100"),
+            new JsonObject { ["type"] = 0, ["resourcePath"] = "unused.dmi" },
+            new JsonObject { ["type"] = 1, ["value"] = 0 }, new JsonObject { ["type"] = 4 }, new JsonObject { ["type"] = 5 } }) {
+            var json = VisibilityMap();
+            json["Maps"]![0]!["CellDefinitions"]!["l"]!["Objects"]![0]!["VarOverrides"]!["invisibility"] = value;
+            Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), "Map invisibility requires a numeric literal");
+        }
+        var overflow = VisibilityMap();
+        overflow["Maps"]![0]!["CellDefinitions"]!["l"]!["Objects"]![0]!["VarOverrides"]!["invisibility"] = JsonNode.Parse("1e99");
+        Throws(() => new DmStartupSession(CompiledProject.Parse(overflow.ToJsonString())), "finite number");
+        foreach (var invalidDefault in new[] { -2.75f, -0.5f, 101.5f, 102f }) {
+            var json = VisibilityMap();
+            json["Types"]![TypeId(json, "/obj/visibility_sign")]!["Variables"]!["invisibility"] = invalidDefault;
+            var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+            Throws(runtime.Boot, "declared invisibility must be between 0 and 101");
+        }
+        var constant = VisibilityMap();
+        constant["Types"]![TypeId(constant, "/obj/visibility_sign")]!["ConstVariables"] = new JsonArray("invisibility");
+        Throws(() => new DmStartupSession(CompiledProject.Parse(constant.ToJsonString())), "const field override");
+        var mixed = VisibilityMap();
+        var turf = TypeId(mixed, "/turf");
+        mixed["Types"]![turf]!["Parent"] = TypeId(mixed, "/atom/movable");
+        mixed["Maps"]![0]!["CellDefinitions"]!["l"]!["Objects"]![0]!["Type"] = turf;
+        Throws(() => new DmStartupSession(CompiledProject.Parse(mixed.ToJsonString())), "declared invisibility on a mapped movable atom");
+    }));
+
+    tests.Add(($"mapped invisibility charges the first variable dictionary materialization: {artifact}", () => {
+        var json = VisibilityMap();
+        var definition = json["Types"]![TypeId(json, "/obj/visibility_sign")]!;
+        definition["Variables"]![new string('v', DmRuntime.DefaultInstructionBudget)] = null;
+        Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), "Map invisibility work budget exhausted");
+    }));
+
     const string iconAsset = "icons/sign.dmi";
     (JsonNode Json, string Token, int Index) SignMap() {
         var json = JsonNode.Parse(File.ReadAllText(artifact))!;

@@ -27,9 +27,8 @@ public sealed partial class DmRuntime {
     private readonly Dictionary<DmObject, MapLocation> _mapLocations = [];
     private readonly HashSet<DmObject> _multiLevelAreas = [];
     private readonly List<DmObject> _mapMovableNewOrder = [];
-    private readonly HashSet<DmObject> _mapMovableNameOverrides = [];
     private DmObject? _defaultArea;
-    private sealed record MapLocation(int X, int Y, int Z, DmObject? Loc);
+    private sealed record MapLocation(int X, int Y, int Z, DmObject? Loc, bool NameOverridden = false, bool InvisibilityOverridden = false);
     // Native fields require appearance, containment or connection adapters, not raw compiler defaults.
     // Names are pinned to DMStandard/Types/Atoms at the supported compiler revision.
     private static readonly HashSet<string> UnsupportedAtomFields = new(StringComparer.Ordinal) {
@@ -399,7 +398,9 @@ public sealed partial class DmRuntime {
                             ValidateMapInitializer(instance, initializer, new HashSet<Procedure>(), "Movable");
                         // Validate every mapped initializer before Boot can produce effects.
                         // Execution is deferred to this instance's position in New order.
-                        _mapLocations.Add(instance, new(x, y, block.Z, turf));
+                        _mapLocations.Add(instance, new(x, y, block.Z, turf,
+                            NameOverridden: entity.VarOverrides?.ContainsKey("name") == true,
+                            InvisibilityOverridden: entity.VarOverrides?.ContainsKey("invisibility") == true));
                         entities.Add(instance);
                         blockMovables.Add((x, y, instance));
                         _entities.Add(new(x, y, block.Z, instance.TypePath));
@@ -641,8 +642,8 @@ public sealed partial class DmRuntime {
     }
     private void ApplyMapEntityOverrides(DmObject instance, Dictionary<string, JsonElement>? overrides) {
         foreach (var (name, raw) in (overrides ?? []).OrderBy(pair => pair.Key, StringComparer.Ordinal)) {
-            if (name == "icon")
-                ChargeMapIconWork(1 + System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(raw).Length);
+            if (name is "icon" or "invisibility")
+                ChargeMapAppearanceWork(1 + System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(raw).Length, name);
             var category = raw.ValueKind.ToString();
             if (raw.ValueKind == JsonValueKind.Object && raw.TryGetProperty("type", out var tag) && tag.ValueKind == JsonValueKind.Number && tag.TryGetInt32(out var kind))
                 category = $"compiler tag {kind}";
@@ -652,8 +653,8 @@ public sealed partial class DmRuntime {
                 throw Failure("metadata/tag override is not implemented");
             if (!instance.HasVariable(name))
                 throw Failure("unknown or non-instance field is not implemented");
-            if (name == "icon") {
-                try { ApplyMapIconOverride(instance, raw); }
+            if (name is "icon" or "invisibility") {
+                try { ApplyMapAppearanceOverride(instance, name, raw); }
                 catch (CompatibilityException ex) { throw Failure(ex.Message, ex); }
                 continue;
             }
@@ -664,42 +665,42 @@ public sealed partial class DmRuntime {
                 throw Failure("native field override is not implemented");
             try { instance.SetVariable(name, ConvertValue(raw)); }
             catch (CompatibilityException ex) { throw Failure(ex.Message, ex); }
-            if (name == "name") _mapMovableNameOverrides.Add(instance);
         }
     }
 
-    private void ChargeMapIconWork(int count) {
+    private void ChargeMapIconWork(int count) => ChargeMapAppearanceWork(count, "icon");
+
+    private void ChargeMapAppearanceWork(int count, string field) {
         _startupCancellation.ThrowIfCancellationRequested();
-        if (count < 0 || count > _budget) throw new CompatibilityException("Map icon work budget exhausted.");
+        if (count < 0 || count > _budget) throw new CompatibilityException($"Map {field} work budget exhausted.");
         _budget -= count;
     }
 
-    private void ValidateMapIconOwner(DmObject obj, bool writing) {
+    private void ValidateMapAppearanceOwner(DmObject obj, string name, bool writing) {
         var atom = false;
         var movable = false;
         for (int? id = obj.TypeId; id is int current; id = Data.Types[current].Parent) {
-            ChargeMapIconWork(1);
+            ChargeMapAppearanceWork(1, name);
             var type = Data.Types[current];
             if (type.Path is "/area" or "/turf" || (type.Path == "/atom" && !movable))
-                throw new CompatibilityException("Map icon requires a declared icon on a mapped movable atom.");
+                throw new CompatibilityException($"Map {name} requires a declared {name} on a mapped movable atom.");
             movable |= type.Path == "/atom/movable";
             atom |= type.Path == "/atom";
             if (writing && type.ConstVariables is not null)
                 foreach (var field in type.ConstVariables) {
-                    ChargeMapIconWork(1);
-                    if (field == "icon") throw new CompatibilityException("const field override is not implemented");
+                    ChargeMapAppearanceWork(1, name);
+                    if (field == name) throw new CompatibilityException("const field override is not implemented");
                 }
         }
-        if (!atom || !movable || !obj.HasVariable("icon"))
-            throw new CompatibilityException("Map icon requires a declared icon on a mapped movable atom.");
+        if (!atom || !movable || !obj.HasVariable(name))
+            throw new CompatibilityException($"Map {name} requires a declared {name} on a mapped movable atom.");
     }
 
     private DmResource ResolveMapIcon(string token) =>
         _mapIcons?.Resolve(token, ChargeMapIconWork) ??
         throw new CompatibilityException("Map icon requires an approved DMI resource inventory.");
 
-    private void ApplyMapIconOverride(DmObject obj, JsonElement raw) {
-        ValidateMapIconOwner(obj, writing: true);
+    private DmValue DecodeMapIcon(JsonElement raw) {
         // The compiler's tagged resource is a closed pair. Its token is opaque;
         // only an exact, separately approved entry names an asset.
         if (raw.ValueKind != JsonValueKind.Object || raw.GetPropertyCount() != 2 ||
@@ -710,17 +711,38 @@ public sealed partial class DmRuntime {
         // An escaped JSON code unit uses up to six bytes. Bound decoding before GetString().
         if (System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(path).Length > 6 * DmFileInventory.MaximumPathLength + 2)
             throw new CompatibilityException("Map icon compiler token length exceeds the supported limit.");
-        var resource = ResolveMapIcon(path.GetString()!);
+        return new(ResolveMapIcon(path.GetString()!));
+    }
+
+    private static DmValue NormalizeMapInvisibility(DmValue raw, bool declared) {
+        if (raw.Value is not float n || !float.IsFinite(n))
+            throw new CompatibilityException("Map invisibility requires a finite number.");
+        // DreamMaker checks type declarations before truncation. Placed DMM
+        // values instead use the native signed appearance range.
+        if (declared && (n < 0 || n > 101))
+            throw new CompatibilityException("Mapped movable declared invisibility must be between 0 and 101.");
+        return (float)(int)Math.Clamp(n, -127f, 127f);
+    }
+
+    private void ApplyMapAppearanceOverride(DmObject obj, string name, JsonElement raw) {
+        ValidateMapAppearanceOwner(obj, name, writing: true);
+        // Invisibility accepts a numeric compiler literal. Tagged values and other
+        // types stay outside this mapped field's contract.
+        DmValue value;
+        if (name == "icon") value = DecodeMapIcon(raw);
+        else if (raw.ValueKind == JsonValueKind.Number && raw.TryGetSingle(out var number))
+            value = NormalizeMapInvisibility(new DmValue(number), declared: false);
+        else throw new CompatibilityException("Map invisibility requires a numeric literal.");
         if (obj.DeferredVariables is { } defaults) {
             // The first write materializes every inherited key and the two metadata keys.
-            ChargeMapIconWork(1 + defaults.Count + 2 * ("type".Length + "parent_type".Length));
-            foreach (var name in defaults.Keys) ChargeMapIconWork(name.Length);
+            ChargeMapAppearanceWork(1 + defaults.Count + 2 * ("type".Length + "parent_type".Length), name);
+            foreach (var key in defaults.Keys) ChargeMapAppearanceWork(key.Length, name);
         }
-        obj.SetVariable("icon", new(resource));
+        obj.SetVariable(name, value);
     }
 
     private DmValue ReadMapIcon(DmObject obj) {
-        ValidateMapIconOwner(obj, writing: false);
+        ValidateMapAppearanceOwner(obj, "icon", writing: false);
         var raw = obj.GetVariableOrDefault("icon");
         if (raw.IsNull) return raw;
         if (raw.Value is DmResource resource) return new(ResolveMapIcon(resource.Path));
@@ -1684,9 +1706,13 @@ public sealed partial class DmRuntime {
                     var raw = obj.GetVariableOrDefault(name);
                     // Upstream fills null type-definition names before map overrides.
                     // Explicit null map names instead pass through the native setter.
-                    if (raw.IsNull && !_mapMovableNameOverrides.Contains(obj))
+                    if (raw.IsNull && !location.NameOverridden)
                         return obj.TypePath[(obj.TypePath.LastIndexOf('/') + 1)..].Replace('_', ' ');
                     return raw.Value as string ?? "";
+                }
+                if (name == "invisibility") {
+                    ValidateMapAppearanceOwner(obj, name, writing: false);
+                    return NormalizeMapInvisibility(obj.GetVariableOrDefault(name), declared: !location.InvisibilityOverridden);
                 }
                 if (name == "icon" && _mapIcons is not null) return ReadMapIcon(obj);
                 if (name == "icon_state")

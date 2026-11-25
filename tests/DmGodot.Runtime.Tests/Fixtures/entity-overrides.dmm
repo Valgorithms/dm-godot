@@ -12,6 +12,10 @@
 "j" = (/obj/icon_sign,/turf/plain,/area/plain)
 "k" = (/obj/icon_sign/with_default/child,/turf/plain,/area/plain)
 
+"l" = (/obj/visibility_sign/child{invisibility = 100},/turf/plain,/area/plain)
+"m" = (/obj/visibility_sign/child{invisibility = 0},/turf/plain,/area/plain)
+"n" = (/obj/visibility_sign/child,/turf/plain,/area/plain)
+
 (1,1,1) = {"
 abcdefg
 "}

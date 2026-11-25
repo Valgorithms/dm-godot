@@ -165,6 +165,49 @@ class ProbeTests(unittest.TestCase):
             self.assertIn("path component", report["stdout_tail"])
 
 
+    def test_map_icon_grant_binds_one_project_and_is_separate_from_file_queries(self):
+        smoke = self.clone_smoke()
+        index, token = next((i, item) for i, item in enumerate(smoke["Resources"]) if item.endswith("/smoke.dmi"))
+        entity = smoke["Maps"][0]["CellDefinitions"]["c"]["Objects"][0]
+        entity["VarOverrides"] = {"icon": {"type": 0, "resourcePath": token}}
+        path = "fixtures/smoke/smoke.dmi"
+        raw = (ROOT / path).read_bytes()
+        binding = {"index": index, "token": token, "path": path, "bytes": len(raw),
+                   "oid": hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest(),
+                   "sha256": hashlib.sha256(raw).hexdigest()}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = root / "probe.json"
+            artifact.write_text(json.dumps(smoke))
+            source = {"schema": 1, "source_revision": "1" * 40, "source_tree": "2" * 40,
+                      "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+                      "files": [path], "blocked_paths": []}
+            files = root / "files.json"
+            files.write_text(json.dumps(dict(source, scope="tracked-source-filesystem-snapshot")))
+            icons = root / "icons.json"
+            manifest = dict(source, scope="tracked-map-icon-bindings", bindings=[binding])
+            icons.write_text(json.dumps(manifest))
+            command = [self.dotnet, str(PROBE_DLL), str(artifact)]
+            pins = ["--source-revision", source["source_revision"], "--source-tree", source["source_tree"]]
+            file_args = ["--file-inventory", str(files), *pins]
+            icon_args = ["--map-icons", str(icons)]
+            # A regular filename in the DM query inventory grants no icon override.
+            denied = capture_probe(command + file_args, timeout=15)
+            self.assertEqual((denied["runtime_status"], denied["phase"]), ("blocked", "runtime_construct"))
+            for args, file_hash in ((icon_args + pins, None),
+                                    (file_args + icon_args, hashlib.sha256(files.read_bytes()).hexdigest())):
+                report = capture_probe(command + args, timeout=15)
+                self.assertEqual(report["runtime_status"], "boot_returned")
+                self.assertEqual(report["map_icon_inventory_sha256"], hashlib.sha256(icons.read_bytes()).hexdigest())
+                self.assertEqual(report["file_inventory_sha256"], file_hash)
+            for changes in ({"artifact_sha256": "0" * 64}, {"bindings": [dict(binding, index=-1)]},
+                            {"bindings": [dict(binding, sha256="invalid")]}, {"bindings": [binding, binding]}):
+                with self.subTest(changes=changes):
+                    icons.write_text(json.dumps(dict(manifest, **changes)))
+                    report = capture_probe(command + icon_args + pins, timeout=15)
+                    self.assertEqual(report["measurement_status"], "error")
+                    self.assertEqual(json.loads(report["stdout_tail"])["phase"], "artifact_load")
+
     def test_text_manifest_requires_independent_allowlist_and_exact_blob_binding(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using DMCompiler.Bytecode;
 
 namespace DmGodot.Runtime;
@@ -226,6 +227,8 @@ public sealed class CompatibilityException : Exception {
 internal sealed class CompiledData {
     public required Metadata Metadata { get; init; }
     public required string[] Strings { get; init; }
+    [JsonConverter(typeof(CompiledResourcesConverter))]
+    public string[]? Resources { get; init; }
     public required TypeDefinition[] Types { get; init; }
     public required Procedure[] Procs { get; init; }
     public int[]? GlobalProcs { get; init; }
@@ -233,6 +236,45 @@ internal sealed class CompiledData {
     public Procedure? GlobalInitProc { get; init; }
     public MapDefinition[]? Maps { get; init; }
 }
+// Projects can load without a usable icon table. Retain either a complete, bounded
+// table or none of it. The reader still validates JSON syntax when skipping values.
+internal sealed class CompiledResourcesConverter : JsonConverter<string[]> {
+    public override string[]? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
+        if (reader.TokenType != JsonTokenType.StartArray) {
+            reader.Skip();
+            return null;
+        }
+        List<string>? entries = [];
+        long remainingBytes = DmFileInventory.MaximumUtf8Bytes;
+        while (reader.Read()) {
+            if (reader.TokenType == JsonTokenType.EndArray) return entries?.ToArray();
+            if (entries is null || reader.TokenType != JsonTokenType.String || entries.Count == DmFileInventory.MaximumPaths) {
+                entries = null;
+                reader.Skip();
+                continue;
+            }
+            var bytes = reader.HasValueSequence ? reader.ValueSequence.Length : reader.ValueSpan.Length;
+            if (bytes > remainingBytes || bytes > 6L * DmFileInventory.MaximumPathLength) {
+                entries = null;
+                continue;
+            }
+            remainingBytes -= bytes;
+            string token;
+            try { token = reader.GetString()!; }
+            catch (InvalidOperationException) { // An escaped lone surrogate cannot form a resource name.
+                entries = null;
+                continue;
+            }
+            if (token.Length <= DmFileInventory.MaximumPathLength) entries.Add(token);
+            else entries = null;
+        }
+        throw new JsonException("Incomplete compiler resource table.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, string[] value, JsonSerializerOptions options) =>
+        JsonSerializer.Serialize(writer, value, options);
+}
+
 internal sealed class Metadata { public required string Version { get; init; } }
 internal sealed class TypeChildIndex(TypeDefinition[] types) {
     internal int FirstChild(int id) => types[id].FirstChildId;

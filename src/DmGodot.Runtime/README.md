@@ -58,9 +58,22 @@ revision and opcode hash are checked separately by the build tooling and loader.
   before its pure type initializer and New; initializer assignments can replace
   overrides. Per-instance dictionaries and fresh initializer lists remain isolated,
   and shared type defaults are untouched. Optional compiler ConstVariables metadata
-  is retained to reject inherited const overrides. Global/non-instance variables,
-  unknown fields, tag/type/parent_type/vars and native fields remain rejected except
-  name/icon_state. Rejecting unknown fields is stricter than upstream's ignore behavior.
+  is retained to reject inherited const overrides. The supported native fields are
+  name, icon_state and approved resource-valued icon. Unknown fields, static variables,
+  tag, type, parent_type and vars raise compatibility errors.
+- A mapped movable can override `icon` with a compiler-tagged DMI resource.
+  `DmMapIconInventory` binds the exact compiler resource index and token to an
+  explicitly approved regular DMI asset in the tracked game inventory. The host
+  verifies the source asset and its kind when preparing the binding. The runtime
+  uses only names and never opens the compiler token as a path. This capability
+  is independent of the file inventory used by `fexists` and `file2text`.
+  The instance's `New()` sees the map override. A sibling keeps its own override
+  or inherited default. With the capability enabled a null icon reads as null.
+  An approved icon compares equal to the DM literal with the same compiler token.
+  Cross-path aliases with identical bytes have no verified native equality contract.
+  The runtime rejects other overrides, unapproved resources, gameplay icon writes
+  and stringification of approved icons. Rendering and image operations remain
+  unsupported. Native BYOND also accepts some non-DMI resources in this field.
 - Static mapped movable name/icon_state overrides and reads preserve their raw values.
   Native name reads keep strings and normalize other overridden values to ""; native
   icon_state reads keep strings (including empty) and normalize nonstrings to null.
@@ -196,10 +209,12 @@ and receives New even when no cell uses it, provided the map has at least one z 
 Single-z area coordinates use the lowest turf by y, then x; coordinate reads on areas
 spanning multiple z levels fail explicitly because pinned upstream cross-z cache behavior
 needs separate parity investigation. Their identity and null loc remain available. Native atom/appearance, movable and mob fields beyond loc/coordinates/type metadata
-remain explicit errors, except static turf name/layer and static movable name/icon_state reads; this includes contents, color,
-bounds and connection/vision fields.
+generally raise explicit errors. Supported appearance fields include static turf
+name/layer, static movable name/icon_state, approved movable icon reads, and the
+bounded atom transform subset. Contents, color, bounds and connection/vision
+field access remain unsupported.
 This avoids exposing unnormalized compiler defaults as runtime behavior. Mutation of
-those fields remains rejected so retained objects cannot silently diverge from snapshots.
+unsupported fields remains rejected so retained objects cannot silently diverge from snapshots.
 Direct mapped-object output also fails until native name/stringification is implemented.
 Ordinary user-declared variables remain readable and writable.
 Full containment/movement, native managed object creation,

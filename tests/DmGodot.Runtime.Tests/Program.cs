@@ -2558,6 +2558,131 @@ foreach (var artifact in new[] { alistPath, alistOptimizedPath }) {
 var entityOverridePath = args.Length > 11 ? args[11] : "build/entity-overrides.json";
 var entityOverrideOptimizedPath = args.Length > 12 ? args[12] : "build/entity-overrides-optimized.json";
 foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath }) {
+    JsonNode DirectionMap() {
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        json["Maps"]![0]!["Blocks"]![0]!["Cells"] = new JsonArray("s", "t", "u", "v", "w", "u", "v");
+        return json;
+    }
+    JsonNode DirectionOverrides(JsonNode map) => map["Maps"]![0]!["CellDefinitions"]!["s"]!["Objects"]![0]!["VarOverrides"]!;
+
+    tests.Add(($"mapped dir agrees in New, later DM reads and authoritative entity snapshots: {artifact}", () => {
+        var runtime = new DmRuntime(CompiledProject.Parse(DirectionMap().ToJsonString()));
+        var cells = runtime.MapCells;
+        var markers = cells.SelectMany(cell => cell.Entities).ToArray();
+        // The first cell contains both an overridden marker and a same-type sibling.
+        // Null and zero DMM inputs leave the inherited NORTHWEST direction intact.
+        int[] expected = [4, 9, 9, 9, 2, 9, 9, 2];
+        int[] xs = [1, 1, 2, 3, 4, 5, 6, 7];
+        Check(markers.Length == expected.Length && markers.Distinct().Count() == expected.Length &&
+            markers.All(obj => obj.Variables["direction_at_new"].IsNull), "A placed marker shared identity or called New during construction.");
+        var entities = runtime.MapEntities;
+        var (x, y, z, type) = new MapEntity(1, 2, 3, "/obj");
+        Check((x, y, z, type) == (1, 2, 3, "/obj"), "The existing map entity construction or deconstruction contract changed.");
+        Check(entities.Select(e => e.Direction).SequenceEqual(expected) && entities.Select(e => e.X).SequenceEqual(xs) &&
+            entities.All(e => e.Y == 1 && e.Z == 1) && entities.Select(e => e.Type).SequenceEqual(markers.Select(obj => obj.TypePath)),
+            "The authoritative map lost a direction, position or entity ordering during construction.");
+        runtime.Boot();
+        for (var i = 0; i < markers.Length; i++) {
+            Check(markers[i].Variables["direction_at_new"].Value is float seen && seen == expected[i] &&
+                markers[i].Variables["where_at_new"].IsTruthy, "Mapped New observed the wrong direction or location.");
+            runtime.InvokeGlobal("read_direction", new DmValue(markers[i]));
+            Check(runtime.GetGlobal("observed_direction").Value is float direction && direction == expected[i],
+                "DM observed the wrong direction after New.");
+        }
+        Throws(() => runtime.InvokeGlobal("write_direction", new DmValue(markers[0])), "Mutation of map atom.dir");
+        Throws(() => runtime.InvokeGlobal("initial_direction", new DmValue(markers[0])), "initial native/metadata field");
+        Throws(() => runtime.InvokeGlobal("read_direction", new DmValue(cells[0].Turf)), "Map atom.dir");
+        Throws(() => runtime.InvokeGlobal("read_direction", new DmValue(cells[0].Area)), "Map atom.dir");
+        Check(runtime.MapEntities.Select(e => e.Direction).SequenceEqual(expected), "The direction snapshot changed after New or a rejected write.");
+        runtime.InvokeGlobal("read_direction", new DmValue(markers[0]));
+        Check(runtime.GetGlobal("observed_direction").Number == 4, "The rejected write changed the mapped instance.");
+    }));
+
+    tests.Add(($"mapped dir normalizes declarations separately from placed numeric values: {artifact}", () => {
+        // Both native builds distinguish type-declaration compass values from
+        // the positive byte values a DMM override may actually store.
+        (float Raw, int Placed, int Declared)[] cases = [
+            (0, 9, 2), (0.5f, 9, 2), (1.5f, 1, 1), (2, 2, 2), (3, 3, 2), (4, 4, 4),
+            (5, 5, 5), (6, 6, 6), (7, 7, 2), (8.75f, 8, 8), (9, 9, 9), (10, 10, 10),
+            (15, 15, 2), (32, 32, 2), (254, 254, 2), (255.75f, 255, 2), (256, 255, 2),
+            (1e10f, 255, 2), (float.MaxValue, 255, 2)
+        ];
+        var json = DirectionMap();
+        var map = json["Maps"]![0]!;
+        var definitions = map["CellDefinitions"]!;
+        var cells = new JsonArray();
+        var placements = cases.Select(c => (c.Raw, c.Placed)).Concat([(-0.5f, 9), (-2.75f, 9), (float.MinValue, 9)]).ToArray();
+        foreach (var (raw, _) in placements) {
+            var key = "dir" + cells.Count;
+            var cell = definitions["t"]!.DeepClone();
+            cell["Objects"]![0]!["VarOverrides"]!["dir"] = raw;
+            definitions[key] = cell;
+            cells.Add(key);
+        }
+        map["MaxX"] = cells.Count;
+        map["Blocks"]![0]!["Width"] = cells.Count;
+        map["Blocks"]![0]!["Cells"] = cells;
+        var runtime = new DmRuntime(CompiledProject.Parse(json.ToJsonString()));
+        runtime.Boot();
+        var placed = placements.Select(c => c.Item2).ToArray();
+        Check(runtime.MapEntities.Select(e => e.Direction).SequenceEqual(placed) &&
+            runtime.MapCells.Select(c => c.Entities[0].Variables["direction_at_new"].Number).SequenceEqual(placed.Select(n => (float)n)),
+            "Map override normalization disagreed with the native snapshot or New observations.");
+
+        var declared = DirectionMap();
+        var child = declared["Types"]![TypeId(declared, "/obj/direction_marker/angled/child")]!;
+        foreach (var (raw, _, expected) in cases) {
+            child["Variables"] = new JsonObject { ["dir"] = raw };
+            var withDefault = new DmRuntime(CompiledProject.Parse(declared.ToJsonString()));
+            withDefault.Boot();
+            // Cell 3 has an omitted DMM override. Its type declaration sits on a child of NORTHWEST.
+            Check(withDefault.MapEntities[3].Direction == expected &&
+                withDefault.MapCells[2].Entities[0].Variables["direction_at_new"].Number == expected,
+                "Child type direction was not normalized from its own declaration.");
+        }
+    }));
+
+    tests.Add(($"mapped dir rejects unsupported DMM shapes and invalid type defaults: {artifact}", () => {
+        foreach (var raw in new JsonNode[] { JsonValue.Create("EAST")!, JsonNode.Parse("1e99")!,
+            new JsonObject { ["type"] = 0, ["resourcePath"] = "unused.dmi" },
+            new JsonObject { ["type"] = 1, ["value"] = 0 }, new JsonObject { ["type"] = 4 } }) {
+            var json = DirectionMap();
+            DirectionOverrides(json)["dir"] = raw;
+            Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), "Map dir requires a finite number or null");
+        }
+        foreach (var raw in new JsonNode?[] { null, JsonValue.Create(-0.5f), JsonValue.Create("NORTH"), JsonNode.Parse("1e99") }) {
+            var json = DirectionMap();
+            var map = json["Maps"]![0]!;
+            // Every placed marker has a valid explicit override. Its malformed declaration must still fail.
+            map["CellDefinitions"]!["s"]!["Objects"]!.AsArray().RemoveAt(1);
+            map["Blocks"]![0]!["Cells"] = new JsonArray("s", "s", "s", "s", "s", "s", "s");
+            json["Types"]![TypeId(json, "/obj/direction_marker/angled")]!["Variables"]!["dir"] = raw;
+            Throws(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())), "Map dir declaration requires a finite nonnegative number");
+        }
+    }));
+
+    tests.Add(($"mapped dir rejects const overrides and mixed native roles before publication: {artifact}", () => {
+        var constant = DirectionMap();
+        constant["Types"]![TypeId(constant, "/obj/direction_marker/angled")]!["ConstVariables"] = new JsonArray("dir");
+        Throws(() => new DmStartupSession(CompiledProject.Parse(constant.ToJsonString())), "const field override");
+        var mixed = DirectionMap();
+        var turf = TypeId(mixed, "/turf");
+        mixed["Types"]![turf]!["Parent"] = TypeId(mixed, "/atom/movable");
+        mixed["Maps"]![0]!["CellDefinitions"]!["s"]!["Objects"]![0]!["Type"] = turf;
+        Throws(() => new DmStartupSession(CompiledProject.Parse(mixed.ToJsonString())), "declared dir on a mapped movable atom");
+    }));
+
+    tests.Add(($"mapped dir meters override bytes and honors startup cancellation: {artifact}", () => {
+        var oversized = DirectionMap();
+        DirectionOverrides(oversized)["dir"] = new string('x', DmRuntime.DefaultInstructionBudget);
+        Throws(() => new DmStartupSession(CompiledProject.Parse(oversized.ToJsonString())), "Map dir work budget exhausted");
+        using var token = new CancellationTokenSource();
+        using var abandoned = new DmStartupSession(CompiledProject.Parse(DirectionMap().ToJsonString()), cancellationToken: token.Token);
+        token.Cancel();
+        StartupError<OperationCanceledException>(() => abandoned.Advance());
+        StartupError<InvalidOperationException>(() => abandoned.Advance());
+    }));
+
     JsonNode DescriptionMap() {
         var json = JsonNode.Parse(File.ReadAllText(artifact))!;
         json["Maps"]![0]!["Blocks"]![0]!["Cells"] = new JsonArray("o", "p", "q", "r", "o", "q", "r");
@@ -2947,7 +3072,7 @@ foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath
     foreach (var (field, reason) in new[] {
         ("unknown_field", "unknown or non-instance"), ("only_global", "unknown or non-instance"),
         ("fixed", "const field"), ("type", "metadata/tag"), ("parent_type", "metadata/tag"), ("vars", "metadata/tag"), ("tag", "metadata/tag"),
-        ("loc", "native field"), ("x", "native field"), ("dir", "native field"), ("icon", "requires a tagged DMI resource"), ("layer", "native field"),
+        ("loc", "native field"), ("x", "native field"), ("plane", "native field"), ("icon", "requires a tagged DMI resource"), ("layer", "native field"),
         ("density", "native field"), ("screen_loc", "native field")
     }) tests.Add(($"entity override rejects {field}: {artifact}", () => {
         var json = JsonNode.Parse(File.ReadAllText(artifact))!;
@@ -2969,7 +3094,7 @@ foreach (var artifact in new[] { entityOverridePath, entityOverrideOptimizedPath
     foreach (var (proc, message) in new[] {
         ("write_name", "Mutation of map atom.name"), ("write_state", "Mutation of map atom.icon_state"),
         ("output_object", "Map atom stringification"), ("interpolate_object", "Object/article string interpolation"),
-        ("read_other_native", "Map atom.dir"), ("read_turf_state", "Map atom.icon_state")
+        ("read_other_native", "Map atom.plane"), ("read_turf_state", "Map atom.icon_state")
     }) tests.Add(($"entity appearance remains read-only: {proc}/{artifact}", () => {
         var runtime = new DmRuntime(CompiledProject.Load(artifact)); runtime.Boot();
         Throws(() => runtime.InvokeGlobal(proc, new DmValue(runtime.MapCells[0].Entities[0])), message);

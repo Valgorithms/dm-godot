@@ -56,7 +56,7 @@ world
 /proc/interpolate_object(value)
     world << "[value]"
 /proc/read_other_native(value)
-    world << value:dir
+    world << value:plane
 /proc/read_turf_state()
     var/turf/t = locate(1,1,1)
     world << t.icon_state
@@ -116,3 +116,23 @@ var/global/observed_description
     observed_description = value:desc
 /proc/write_description(value)
     value:desc = "changed"
+
+/obj/direction_marker
+    var/direction_at_new
+    var/where_at_new
+    New(where)
+        direction_at_new = dir
+        where_at_new = (loc == where)
+
+/obj/direction_marker/angled
+    dir = NORTHWEST
+
+/obj/direction_marker/angled/child
+
+var/global/observed_direction
+/proc/read_direction(value)
+    observed_direction = value:dir
+/proc/write_direction(value)
+    value:dir = WEST
+/proc/initial_direction(value)
+    observed_direction = initial(value:dir)

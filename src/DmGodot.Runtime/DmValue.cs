@@ -111,7 +111,10 @@ public sealed class DmAssocList {
     public void Set(DmValue key, DmValue value) => _pairs[key] = value;
 }
 public sealed record WorldTile(int X, int Y, int Z, bool Density, string Type, string? Color = null);
-public sealed record MapEntity(int X, int Y, int Z, string Type);
+public sealed record MapEntity(int X, int Y, int Z, string Type) {
+    internal const int South = 2;
+    public int Direction { get; init; } = South;
+}
 public sealed record RuntimeLog(double Time, string Text);
 
 /// <summary>Retained static map objects; diagnostic records remain separate snapshots.</summary>

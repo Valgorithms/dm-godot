@@ -28,7 +28,8 @@ public sealed partial class DmRuntime {
     private readonly HashSet<DmObject> _multiLevelAreas = [];
     private readonly List<DmObject> _mapMovableNewOrder = [];
     private DmObject? _defaultArea;
-    private sealed record MapLocation(int X, int Y, int Z, DmObject? Loc, bool NameOverridden = false, bool InvisibilityOverridden = false);
+    private sealed record MapLocation(int X, int Y, int Z, DmObject? Loc, bool NameOverridden = false,
+        bool InvisibilityOverridden = false, MapEntity? MovableSnapshot = null);
     // Native fields require appearance, containment or connection adapters, not raw compiler defaults.
     // Names are pinned to DMStandard/Types/Atoms at the supported compiler revision.
     private static readonly HashSet<string> UnsupportedAtomFields = new(StringComparer.Ordinal) {
@@ -358,6 +359,7 @@ public sealed partial class DmRuntime {
         var cells = new Dictionary<(int, int, int), WorldTile>();
         var areas = new Dictionary<int, DmObject>();
         var turfInitializers = new Dictionary<int, TurfInitializerPlan>();
+        var declaredDirections = new Dictionary<int, int>();
         if ((Data.Maps ?? []).Any(map => map.MaxZ > 0)) {
             var defaultAreaId = World.GetVariableOrDefault("area").Value is DmTypeReference defaultAreaType
                 ? defaultAreaType.Id : throw new CompatibilityException("world.area must contain a type reference for default map filling.");
@@ -405,12 +407,16 @@ public sealed partial class DmRuntime {
                             ValidateMapInitializer(instance, initializer, new HashSet<Procedure>(), "Movable");
                         // Validate every mapped initializer before Boot can produce effects.
                         // Execution is deferred to this instance's position in New order.
+                        var snapshot = new MapEntity(x, y, block.Z, instance.TypePath) {
+                            Direction = PlacedDirection(instance, entity.VarOverrides?.ContainsKey("dir") == true, declaredDirections)
+                        };
                         _mapLocations.Add(instance, new(x, y, block.Z, turf,
                             NameOverridden: entity.VarOverrides?.ContainsKey("name") == true,
-                            InvisibilityOverridden: entity.VarOverrides?.ContainsKey("invisibility") == true));
+                            InvisibilityOverridden: entity.VarOverrides?.ContainsKey("invisibility") == true,
+                            MovableSnapshot: snapshot));
                         entities.Add(instance);
                         blockMovables.Add((x, y, instance));
-                        _entities.Add(new(x, y, block.Z, instance.TypePath));
+                        _entities.Add(snapshot);
                     }
                     _mapCells.Add(new(x, y, block.Z, turf, area, entities.AsReadOnly()));
                 }
@@ -649,7 +655,7 @@ public sealed partial class DmRuntime {
     }
     private void ApplyMapEntityOverrides(DmObject instance, Dictionary<string, JsonElement>? overrides) {
         foreach (var (name, raw) in (overrides ?? []).OrderBy(pair => pair.Key, StringComparer.Ordinal)) {
-            var appearanceOverride = name is "desc" or "icon" or "invisibility";
+            var appearanceOverride = name is "desc" or "dir" or "icon" or "invisibility";
             if (appearanceOverride)
                 ChargeMapAppearanceWork(1 + System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(raw).Length, name);
             var category = raw.ValueKind.ToString();
@@ -732,11 +738,40 @@ public sealed partial class DmRuntime {
         return (float)(int)Math.Clamp(n, -127f, 127f);
     }
 
+    private static int DeclaredMapDirection(DmValue raw) {
+        if (raw.Value is not float n || !float.IsFinite(n) || n < 0)
+            throw new CompatibilityException("Map dir declaration requires a finite nonnegative number.");
+        // The compiler keeps only the eight compass facings on a declaration.
+        var direction = (int)Math.Min(n, 255f);
+        return direction is 1 or 2 or 4 or 5 or 6 or 8 or 9 or 10 ? direction : MapEntity.South;
+    }
+
+    private static DmValue DecodeMapDirection(DmObject obj, JsonElement raw) {
+        var inherited = DeclaredMapDirection(obj.GetVariableOrDefault("dir"));
+        if (raw.ValueKind == JsonValueKind.Null) return inherited;
+        if (raw.ValueKind != JsonValueKind.Number || !raw.TryGetSingle(out var n) || !float.IsFinite(n))
+            throw new CompatibilityException("Map dir requires a finite number or null.");
+        // A placement can retain any positive byte, even opposing direction bits.
+        return n < 1 ? inherited : (int)Math.Min(n, 255f);
+    }
+
+    private int PlacedDirection(DmObject obj, bool overridden, Dictionary<int, int> declaredDirections) {
+        ChargeMapAppearanceWork(1, "dir");
+        if (overridden) return (int)obj.GetVariableOrDefault("dir").Number;
+        if (!declaredDirections.TryGetValue(obj.TypeId, out var direction)) {
+            ValidateMapAppearanceOwner(obj, "dir", writing: false);
+            direction = DeclaredMapDirection(obj.GetVariableOrDefault("dir"));
+            declaredDirections.Add(obj.TypeId, direction);
+        }
+        return direction;
+    }
+
     private void ApplyMapAppearanceOverride(DmObject obj, string name, JsonElement raw) {
         ValidateMapAppearanceOwner(obj, name, writing: true);
         var value = name switch {
             "desc" when raw.ValueKind is JsonValueKind.String or JsonValueKind.Null => ConvertValue(raw),
             "desc" => throw new CompatibilityException("Map desc requires text or null."),
+            "dir" => DecodeMapDirection(obj, raw),
             "icon" => DecodeMapIcon(raw),
             "invisibility" when raw.ValueKind == JsonValueKind.Number && raw.TryGetSingle(out var number) =>
                 NormalizeMapInvisibility(new DmValue(number), declared: false),
@@ -1705,6 +1740,7 @@ public sealed partial class DmRuntime {
             if (name == "time") return (float)Time;
         }
         if (_mapLocations.TryGetValue(obj, out var location)) {
+            if (name == "dir" && location.MovableSnapshot is { } snapshot) return snapshot.Direction;
             // The pinned appearance setter retains strings and normalizes every
             // nonstring name to empty. Keep raw definition values untouched.
             if (IsSubtypeOf(obj.TypeId, "/turf")) {

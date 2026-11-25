@@ -21,6 +21,12 @@
 "q" = (/obj/described_item/child{desc = null},/turf/plain,/area/plain)
 "r" = (/obj/described_item/child,/turf/plain,/area/plain)
 
+"s" = (/obj/direction_marker/angled/child{dir = 4},/obj/direction_marker/angled/child,/turf/plain,/area/plain)
+"t" = (/obj/direction_marker/angled/child{dir = null},/turf/plain,/area/plain)
+"u" = (/obj/direction_marker/angled/child,/turf/plain,/area/plain)
+"v" = (/obj/direction_marker,/turf/plain,/area/plain)
+"w" = (/obj/direction_marker/angled/child{dir = 0},/turf/plain,/area/plain)
+
 (1,1,1) = {"
 abcdefg
 "}

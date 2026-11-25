@@ -46,12 +46,15 @@ public sealed class DmRuntime {
     private static readonly HashSet<string> UnsupportedMobFields = new(StringComparer.Ordinal) {
         "client", "key", "ckey", "group", "see_invisible", "see_infrared", "sight", "see_in_dark"
     };
-    private bool UnsupportedMapField(DmObject obj, string name) =>
-        UnsupportedAtomFields.Contains(name) ||
+    private bool UnsupportedSubtypeField(DmObject obj, string name) =>
         (IsSubtypeOf(obj.TypeId, "/atom/movable") && UnsupportedMovableFields.Contains(name)) ||
         (IsSubtypeOf(obj.TypeId, "/mob") && UnsupportedMobFields.Contains(name));
-    private bool ProtectedMapField(DmObject obj, string name) => UnsupportedMapField(obj, name) ||
-        name is "loc" or "x" or "y" or "z";
+    private bool UnsupportedMapField(DmObject obj, string name) =>
+        UnsupportedAtomFields.Contains(name) || UnsupportedSubtypeField(obj, name);
+    private static bool ProtectedAtomField(string name) =>
+        UnsupportedAtomFields.Contains(name) || name is "loc" or "x" or "y" or "z";
+    private bool ProtectedMapField(DmObject obj, string name) =>
+        ProtectedAtomField(name) || UnsupportedSubtypeField(obj, name);
     private readonly List<RuntimeLog> _logs = [];
     private readonly PriorityQueue<Fiber, (double Time, long Sequence)> _queue = new();
     private readonly DmValue[] _globals;
@@ -236,7 +239,7 @@ public sealed class DmRuntime {
         return new DmObject(id, Data.Types[id].Path, defaults.Variables, defaults.Type, defaults.ParentType);
     }
 
-    private TypeDefaults GetTypeDefaults(int id, bool initializeLater) {
+    private TypeDefaults GetTypeDefaults(int id, bool initializeLater, bool mappedTurf = false) {
         // Walk iteratively to the nearest complete prototype, preserving cold-path
         // ancestor guard/conversion ordering. Never cache a partly converted type.
         var pending = new Stack<int>();
@@ -247,17 +250,37 @@ public sealed class DmRuntime {
         }
         if (!initializeLater && inherited?.ExecutableInitializerType is { } cachedInitializer)
             throw new CompatibilityException($"Type initializers are not implemented: {cachedInitializer}.");
+        bool checkedTurfDepth = false;
         while (pending.TryPop(out var typeId)) {
             var type = Data.Types[typeId];
             var initializer = type.InitProc is int init && Data.Procs[init].Bytecode is { Length: > 0 }
                 ? type.Path : null;
             if (!initializeLater && initializer is not null)
                 throw new CompatibilityException($"Type initializers are not implemented: {initializer}.");
+            bool newTurfPrototype = mappedTurf && (initializer is not null || inherited?.ExecutableInitializerType is not null);
+            if (newTurfPrototype) {
+                // The first formerly blocked ancestor is the point beyond which map
+                // construction must reserve cold prototype copies for the whole leaf.
+                if (!checkedTurfDepth) {
+                    var depth = 0;
+                    for (int? ancestor = id; ancestor is not null; ancestor = Data.Types[ancestor.Value].Parent) {
+                        ChargeTurfWork(1);
+                        if (++depth > 256) throw new CompatibilityException("Turf initializer inheritance limit exceeded.");
+                    }
+                    checkedTurfDepth = true;
+                }
+                ReserveTurfFieldCopy(inherited?.Variables.Keys, inherited?.Variables.Count ?? 0);
+                ReserveTurfFieldCopy(type.Variables?.Keys, type.Variables?.Count ?? 0);
+            }
             var variables = new Dictionary<string, DmValue>(
                 (inherited?.Variables.Count ?? 0) + (type.Variables?.Count ?? 0), StringComparer.Ordinal);
             if (inherited is not null)
-                foreach (var pair in inherited.Variables) variables.Add(pair.Key, pair.Value);
+                foreach (var pair in inherited.Variables) {
+                    if (newTurfPrototype) _startupCancellation.ThrowIfCancellationRequested();
+                    variables.Add(pair.Key, pair.Value);
+                }
             foreach (var (name, raw) in type.Variables ?? []) {
+                if (newTurfPrototype) ChargeTurfWork(System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(raw).Length);
                 var value = ConvertValue(raw);
                 // If conversion later gains mutable values, do not silently share
                 // those across instances through this immutable-default cache.
@@ -319,6 +342,7 @@ public sealed class DmRuntime {
     private void LoadMaps() {
         var cells = new Dictionary<(int, int, int), WorldTile>();
         var areas = new Dictionary<int, DmObject>();
+        var turfInitializers = new Dictionary<int, TurfInitializerPlan>();
         if ((Data.Maps ?? []).Any(map => map.MaxZ > 0)) {
             var defaultAreaId = World.GetVariableOrDefault("area").Value is DmTypeReference defaultAreaType
                 ? defaultAreaType.Id : throw new CompatibilityException("world.area must contain a type reference for default map filling.");
@@ -342,7 +366,7 @@ public sealed class DmRuntime {
                     var turfId = cell.Turf?.Type ?? (World.GetVariableOrDefault("turf").Value is DmTypeReference defaultTurf
                         ? defaultTurf.Id : throw new CompatibilityException("world.turf must contain a type reference for default map filling."));
                     RequireMapType(turfId, "/turf", "turf");
-                    var turf = CreateMapTurf(turfId, cell.Turf?.VarOverrides);
+                    var turf = CreateMapTurf(turfId, cell.Turf?.VarOverrides, turfInitializers);
                     if (cell.Area?.VarOverrides is not null)
                         throw new CompatibilityException("Map area variable overrides are not implemented.");
                     var areaId = cell.Area?.Type ?? (World.GetVariableOrDefault("area").Value is DmTypeReference defaultArea
@@ -391,19 +415,181 @@ public sealed class DmRuntime {
         if (_defaultArea is not null) _mapLocations.TryAdd(_defaultArea, new(0, 0, 0, null));
     }
 
-    private DmObject CreateMapTurf(int typeId, Dictionary<string, JsonElement>? overrides) {
-        // Definition defaults first, then per-cell raw overrides. Executable turf
-        // initializers remain rejected by CreateInstance; no late writes emulate them.
-        var turf = CreateInstance(typeId);
+    private sealed record TurfInitializerPlan(Procedure Entry, HashSet<string> Writes,
+        HashSet<string> ConstFields, long InstanceWork, long MaterializationWork);
+
+    private void ReserveTurfFieldCopy(IEnumerable<string>? names, int count) {
+        ChargeTurfWork(1L + count);
+        if (names is null) return;
+        foreach (var name in names) ChargeTurfWork(name.Length);
+    }
+
+    private void ChargeTurfWork(long count) {
+        _startupCancellation.ThrowIfCancellationRequested();
+        if (count < 0 || count > _budget) throw new CompatibilityException("Mapped turf initializer construction work budget exhausted.");
+        _budget -= (int)count;
+    }
+
+    private DmObject CreateMapTurf(int typeId, Dictionary<string, JsonElement>? overrides,
+        Dictionary<int, TurfInitializerPlan> plans) {
+        var defaults = GetTypeDefaults(typeId, initializeLater: true, mappedTurf: true);
+        var turf = new DmObject(typeId, Data.Types[typeId].Path, defaults.Variables, defaults.Type, defaults.ParentType);
+        TurfInitializerPlan? plan = null;
+        if (defaults.ExecutableInitializerType is not null) {
+            if (!plans.TryGetValue(typeId, out plan)) {
+                plan = ValidateTurfInitializer(turf, defaults.Variables);
+                plans.Add(typeId, plan);
+            }
+            // The first instance write also copies the inherited dictionary, including metadata.
+            var materialization = plan.Writes.Count > 0 || overrides is { Count: > 0 } ? plan.MaterializationWork : 0;
+            ChargeTurfWork(plan.InstanceWork + materialization);
+        }
         foreach (var (name, value) in overrides ?? []) {
+            if (plan is not null) {
+                ChargeTurfWork(1L + name.Length);
+                if (plan.Writes.Contains(name))
+                    throw new CompatibilityException($"Map turf override '{name}' overlaps an executable initializer assignment.");
+                if (plan.ConstFields.Contains(name))
+                    throw new CompatibilityException($"Map turf override '{name}' targets a const field.");
+            }
             if (!turf.HasVariable(name))
                 throw new CompatibilityException($"Map turf override '{name}' names an unknown variable.");
-            if ((ProtectedMapField(turf, name) && name is not ("density" or "color" or "name" or "layer")) ||
+            var protectedField = plan is null ? ProtectedMapField(turf, name) : ProtectedAtomField(name);
+            if ((protectedField && name is not ("density" or "color" or "name" or "layer")) ||
                 name is "type" or "parent_type" or "vars" or "tag")
                 throw new CompatibilityException($"Map turf override '{name}' is not implemented.");
+            if (plan is not null) ChargeTurfWork(System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(value).Length);
             turf.SetVariable(name, ConvertValue(value));
         }
+        if (plan is not null) Execute(new Fiber(new Frame(plan.Entry, turf, [])));
         return turf;
+    }
+
+    // Each body calls its compiler super first, then assigns complete literal expressions.
+    // Validate all bodies against the concrete leaf before executing any part of the chain.
+    private TurfInitializerPlan ValidateTurfInitializer(DmObject turf, IReadOnlyDictionary<string, DmValue> defaults) {
+        var bodies = new Stack<Procedure>();
+        var constFields = new HashSet<string>(StringComparer.Ordinal);
+        var writes = new HashSet<string>(StringComparer.Ordinal);
+        var depth = 0;
+        for (int? id = turf.TypeId; id is int typeId; id = Data.Types[typeId].Parent) {
+            ChargeTurfWork(1);
+            if (++depth > 256) throw new CompatibilityException("Turf initializer inheritance limit exceeded.");
+            var type = Data.Types[typeId];
+            if (type.Path is "/atom/movable" or "/mob")
+                throw new CompatibilityException($"Turf initializer has incompatible builtin ancestor {type.Path}.");
+            if (type.ConstVariables is not null)
+                foreach (var name in type.ConstVariables) {
+                    ChargeTurfWork(1L + name.Length);
+                    constFields.Add(name);
+                }
+            if (type.InitProc is not int procId) continue;
+            var proc = Data.Procs[procId];
+            if (proc.OwningTypeId != typeId || proc.Name != "<init>" || proc.Attributes != 0 ||
+                proc.MaxVariableId != 0 || proc.Arguments is { Length: > 0 } || proc.Bytecode is not { Length: > 0 })
+                throw new CompatibilityException($"Turf initializer on {type.Path} has unsupported procedure metadata.");
+            bodies.Push(proc);
+        }
+        long instanceWork = 0;
+        Procedure? entry = null;
+        foreach (var proc in bodies) {
+            entry = proc;
+            var bytes = proc.Bytecode!;
+            ChargeTurfWork(1L + bytes.Length + (proc.SourceInfo?.Length ?? 0));
+            // The VM allocates at least 256 locals per frame. Charging the byte stream
+            // also bounds literal reads and packed pushes that share one VM dispatch.
+            instanceWork += 256L + bytes.Length + depth;
+            var reader = new ByteReader(bytes);
+            CompatibilityException FaultAt(int offset, string detail) =>
+                new($"Turf initializer {detail} at {Project.Location(proc, offset)}");
+            if ((DreamProcOpcode)reader.Byte() != DreamProcOpcode.Call || reader.Reference().Kind != 6 ||
+                reader.Byte() != 0 || reader.Int() != 0)
+                throw FaultAt(0, "must begin with an argument-free super call");
+            // The header's implicit result cannot be consumed as a literal or used for a write.
+            // Type IDs distinguish the one supported associative key from other literal values.
+            var operands = new List<int>();
+            var needsPop = false;
+            while (reader.Position < reader.Length) {
+                _startupCancellation.ThrowIfCancellationRequested();
+                var offset = reader.Position;
+                var op = (DreamProcOpcode)reader.Byte();
+                if (needsPop) {
+                    if (op != DreamProcOpcode.Pop) throw FaultAt(offset, "must discard the previous assignment");
+                    needsPop = false;
+                    continue;
+                }
+                switch (op) {
+                    case DreamProcOpcode.PushNull: operands.Add(-1); break;
+                    case DreamProcOpcode.PushFloat: reader.Float(); operands.Add(-1); break;
+                    case DreamProcOpcode.PushString: case DreamProcOpcode.PushResource:
+                        Project.String(reader.Int()); operands.Add(-1); break;
+                    case DreamProcOpcode.PushType:
+                        var typeId = reader.Int();
+                        if ((uint)typeId >= (uint)Data.Types.Length) throw FaultAt(offset, "uses an invalid type literal");
+                        operands.Add(typeId); break;
+                    case DreamProcOpcode.PushNFloats: case DreamProcOpcode.PushNStrings:
+                    case DreamProcOpcode.CreateListNFloats: case DreamProcOpcode.CreateListNStrings: {
+                        var count = reader.Int();
+                        if (count < 0 || count > 256 || count > (reader.Length - reader.Position) / 4)
+                            throw FaultAt(offset, "packed literal count is invalid or exceeds 256");
+                        var push = op is DreamProcOpcode.PushNFloats or DreamProcOpcode.PushNStrings;
+                        for (var i = 0; i < count; i++) {
+                            _startupCancellation.ThrowIfCancellationRequested();
+                            if (op is DreamProcOpcode.PushNStrings or DreamProcOpcode.CreateListNStrings) Project.String(reader.Int());
+                            else reader.Float();
+                            if (push) operands.Add(-1);
+                        }
+                        if (!push) operands.Add(-1);
+                        break;
+                    }
+                    case DreamProcOpcode.CreateList: {
+                        var count = reader.Int();
+                        if (count < 0 || count > 256 || count > operands.Count)
+                            throw FaultAt(offset, "list literal count is invalid or exceeds 256");
+                        operands.RemoveRange(operands.Count - count, count);
+                        operands.Add(-1);
+                        break;
+                    }
+                    case DreamProcOpcode.CreateAssociativeList:
+                        if (reader.Int() != 1 || operands.Count < 2 || operands[^2] < 0)
+                            throw FaultAt(offset, "supports only one type-literal associative key");
+                        instanceWork += Data.Types[operands[^2]].Path.Length;
+                        operands.RemoveRange(operands.Count - 2, 2);
+                        operands.Add(-1); break;
+                    case DreamProcOpcode.Assign: case DreamProcOpcode.AssignNoPush: {
+                        var target = reader.Reference();
+                        if (operands.Count != 1 || target.Kind != 13)
+                            throw FaultAt(offset, "must assign exactly one literal to an own user field");
+                        var name = Project.String(target.Value);
+                        ChargeTurfWork(1L + name.Length + depth);
+                        if (!turf.HasVariable(name) || constFields.Contains(name) ||
+                            ProtectedAtomField(name) || name is "type" or "parent_type" or "vars" or "tag")
+                            throw FaultAt(offset, $"cannot assign native, const, metadata or unknown field '{name}'");
+                        instanceWork += 1L + name.Length;
+                        writes.Add(name);
+                        operands.Clear();
+                        needsPop = op == DreamProcOpcode.Assign;
+                        break;
+                    }
+                    case DreamProcOpcode.Call:
+                        var reference = reader.Reference();
+                        var callee = reference.Kind == 11 && (uint)reference.Value < (uint)Data.Procs.Length
+                            ? Data.Procs[reference.Value].Name : "indirect or repeated super";
+                        throw FaultAt(offset, $"call '{callee}' is not implemented");
+                    default:
+                        throw FaultAt(offset, $"opcode {op} is not implemented");
+                }
+            }
+            if (needsPop || operands.Count != 0) throw FaultAt(reader.Length, "ends with an incomplete assignment");
+        }
+        // MaterializeVariables copies each key, checks the two metadata keys, then sets both.
+        ChargeTurfWork(1L + defaults.Count);
+        long materializationWork = defaults.Count + 2L + 2 * ("type".Length + "parent_type".Length);
+        foreach (var name in defaults.Keys) {
+            _startupCancellation.ThrowIfCancellationRequested();
+            materializationWork += name.Length;
+        }
+        return new TurfInitializerPlan(entry!, writes, constFields, instanceWork, materializationWork);
     }
 
     private static DmValue TurfLayer(DmObject turf) {

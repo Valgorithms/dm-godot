@@ -895,12 +895,182 @@ foreach (var kind in new[] { 2, 3 })
         Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Compiler value kind");
     }));
 
-tests.Add(("turf overrides do not bypass inherited executable initialization rejection", () => {
-    var json = JsonNode.Parse(File.ReadAllText(turfNamePath))!;
-    json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["Type"] = TypeId(json, "/turf/initialized_child");
-    json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"] = new JsonObject { ["name"] = "override" };
-    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers are not implemented: /turf/initialized_base");
-}));
+var optimizedTurfNamePath = args.Length > 13 ? args[13] : "build/turf-name-optimized.json";
+foreach (var artifact in new[] { turfNamePath, optimizedTurfNamePath }) {
+    JsonNode MappedTurf(string type = "/turf/initialized_child/replaced", int repeatedCells = 2) {
+        // Reuse the compiled DMM's two distinct override sets on the chosen initializer types.
+        var json = JsonNode.Parse(File.ReadAllText(artifact))!;
+        var map = json["Maps"]![0]!;
+        var definitions = map["CellDefinitions"]!;
+        definitions["a"]!["Turf"]!["Type"] = TypeId(json, type);
+        definitions["b"]!["Turf"]!["Type"] = TypeId(json, "/turf/initialized_child");
+        var keys = new JsonArray();
+        for (var i = 0; i < repeatedCells; i++) keys.Add("a");
+        keys.Add("b");
+        var block = map["Blocks"]![0]!;
+        map["MaxX"] = keys.Count;
+        block["Width"] = keys.Count;
+        block["Cells"] = keys;
+        return json;
+    }
+
+    tests.Add(($"mapped turf inherited list defaults and raw overrides precede New: {artifact}", () => {
+        var project = CompiledProject.Parse(MappedTurf().ToJsonString());
+        var runtime = new DmRuntime(project);
+        Check(runtime.Logs.Count == 0 && runtime.PendingThreads == 0, "Turf initialization ran a gameplay callback.");
+        runtime.Boot();
+        var expected = new[] { "init=3:3:2:3", "init=2:7:2:4", "init=1:7:2:4" };
+        Check(runtime.Logs.Select(l => l.Text).SequenceEqual(expected), "Turf New observed incorrect field values or order.");
+        var a = runtime.MapCells[0].Turf;
+        var b = runtime.MapCells[1].Turf;
+        DmList List(DmObject turf, string field) => (DmList)turf.Variables[field].Value!;
+        var state = List(a, "state");
+        var inner = (DmList)state.Get(2).Value!;
+        var materials = List(a, "materials");
+        var key = materials.Values.Single();
+        Check(key.Value is DmTypeReference { Path: "/turf/base" } && materials.Get(key).Number == 50,
+            "Type-keyed list lost its ordered key or value.");
+        state.Set(1, 77);
+        inner.Set(1, 88);
+        List(a, "choice").Set(1, 66);
+        materials.Set(key, 99);
+        Check(runtime.GetGlobal("materials").Number == 13, "An instance field shadowing a global changed the global.");
+        void CheckFresh(DmObject turf) {
+            var fresh = List(turf, "state");
+            Check(fresh.Get(1).Number == 1 && ((DmList)fresh.Get(2).Value!).Get(1).Number == 2 &&
+                List(turf, "choice").Get(1).Number == 4 && List(turf, "materials").Get(key).Number == 50,
+                "Mutable list state crossed a turf or runtime boundary.");
+        }
+        CheckFresh(b);
+        var second = new DmRuntime(project);
+        CheckFresh(second.MapCells[0].Turf);
+        second.Boot();
+        Check(second.Logs.Select(l => l.Text).SequenceEqual(expected), "A previous runtime changed subsequent initialization.");
+    }));
+
+    tests.Add(($"mapped turf rejects unsupported effects before startup publication: {artifact}", () => {
+        foreach (var (type, reason) in new[] {
+            ("unsafe_helper", "call 'effectful_turf_helper'"), ("unsafe_sleep", "call 'sleep'"),
+            ("unsafe_global", "own user field"), ("unsafe_native", "field 'contents'"),
+            ("dimensional", "CreateMultidimensionalList"), ("multiple_keys", "one type-literal associative key"),
+            ("text_key", artifact == optimizedTurfNamePath ? "opcode PushStringFloat" : "one type-literal associative key"),
+            ("identity_matrix", "call 'matrix'"), ("translated_matrix", "call 'matrix'")
+        }) {
+            var json = MappedTurf("/turf/initialized_child/" + type);
+            var project = CompiledProject.Parse(json.ToJsonString());
+            var error = StartupError<CompatibilityException>(() => new DmStartupSession(project));
+            Check(error.Message.Contains("Turf initializer") && error.Message.Contains(reason) &&
+                error.Message.Contains("/turf/initialized_child/" + type + "/<init>, byte "),
+                $"Unexpected initializer rejection for {type}: {error.Message}");
+        }
+    }));
+    tests.Add(($"mapped turf preserves role-specific field guards on parsed ancestry: {artifact}", () => {
+        const string ordinary = "/turf/initialized_child/ordinary_key";
+        var valid = new DmRuntime(CompiledProject.Parse(MappedTurf(ordinary).ToJsonString()));
+        Check(((DmList)valid.MapCells[0].Turf.Variables["key"].Value!).Get(1).Number == 5,
+            "Ordinary user-defined turf key was treated as a native mob field.");
+        foreach (var field in new[] { "key", "locs" }) {
+            var plain = JsonNode.Parse(File.ReadAllText(artifact))!;
+            plain["Types"]![TypeId(plain, "/turf")]!["Parent"] = TypeId(plain, "/mob");
+            plain["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"]![field] = null;
+            Throws(() => new DmStartupSession(CompiledProject.Parse(plain.ToJsonString())), $"Map turf override '{field}' is not implemented");
+        }
+        var conflict = MappedTurf(ordinary);
+        conflict["Types"]![TypeId(conflict, "/turf")]!["Parent"] = TypeId(conflict, "/mob");
+        Throws(() => new DmStartupSession(CompiledProject.Parse(conflict.ToJsonString())), "Turf initializer has incompatible builtin ancestor /mob.");
+    }));
+    tests.Add(($"mapped turf rejects DMM fields written by any ancestor or child initializer: {artifact}", () => {
+        foreach (var field in new[] { "state", "choice" }) {
+            var json = MappedTurf();
+            json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"]![field] = 31;
+            var error = StartupError<CompatibilityException>(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())));
+            Check(error.Message.Contains(field) && error.Message.Contains("overlap", StringComparison.OrdinalIgnoreCase),
+                "Expected an explicit DMM field conflict: " + error.Message);
+        }
+    }));
+    tests.Add(($"mapped turf requires one leading argument-free super call: {artifact}", () => {
+        foreach (var duplicate in new[] { false, true }) {
+            var json = MappedTurf();
+            var type = json["Types"]![TypeId(json, "/turf/initialized_child/replaced")]!;
+            var proc = json["Procs"]![type["InitProc"]!.GetValue<int>()]!;
+            var code = Convert.FromBase64String(proc["Bytecode"]!.GetValue<string>());
+            byte[] super = [(byte)DreamProcOpcode.Call, 6, 0, 0, 0, 0, 0];
+            Check(code.AsSpan().StartsWith(super), "Fixture no longer has the expected compiler-emitted super.");
+            proc["Bytecode"] = Convert.ToBase64String(duplicate ? [.. super, .. code] : code[super.Length..]);
+            var error = StartupError<CompatibilityException>(() => new DmStartupSession(CompiledProject.Parse(json.ToJsonString())));
+            Check(error.Message.Contains("Turf initializer") && error.Message.Contains("super", StringComparison.OrdinalIgnoreCase),
+                "Malformed super chain was accepted or misdiagnosed: " + error.Message);
+        }
+    }));
+    tests.Add(($"mapped turf initialization charges construction work across repeated cells: {artifact}", () => {
+        // One cell with a wide inherited field table is valid. Repeated private copies share the constructor's fuel.
+        JsonNode Wide(int cells) {
+            var json = MappedTurf(repeatedCells: cells);
+            var fields = json["Types"]![TypeId(json, "/turf/initialized_base")]!["Variables"]!;
+            for (var i = 0; i < 1000; i++) fields["field_" + i] = i;
+            return json;
+        }
+        var small = new DmRuntime(CompiledProject.Parse(Wide(1).ToJsonString()));
+        Check(small.MapCells[0].Turf.Variables["field_999"].Number == 999, "Wide field table did not initialize.");
+        var error = StartupError<CompatibilityException>(() => new DmStartupSession(CompiledProject.Parse(Wide(128).ToJsonString())));
+        Check(error.Message.Contains("construction work budget exhausted"), "Construction did not stop at its work budget: " + error.Message);
+    }));
+    tests.Add(($"mapped turf meters inherited names and raw text per cell: {artifact}", () => {
+        JsonNode WithText(string text, int cells, bool fieldName) {
+            var json = MappedTurf(repeatedCells: cells);
+            if (fieldName)
+                json["Types"]![TypeId(json, "/turf/initialized_base")]!["Variables"]![text] = 1;
+            else
+                json["Maps"]![0]!["CellDefinitions"]!["a"]!["Turf"]!["VarOverrides"]!["name"] = text;
+            return json;
+        }
+        var longText = new string('a', 3000);
+        foreach (var fieldName in new[] { true, false }) {
+            foreach (var control in new[] { WithText(longText, 1, fieldName), WithText("a", 40, fieldName) })
+                _ = new DmRuntime(CompiledProject.Parse(control.ToJsonString()));
+            var error = StartupError<CompatibilityException>(() => new DmStartupSession(
+                CompiledProject.Parse(WithText(longText, 40, fieldName).ToJsonString())));
+            Check(error.Message.Contains("construction work budget exhausted"), "Unexpected text-work fault: " + error.Message);
+        }
+    }));
+    tests.Add(($"mapped turf list literals admit 256 elements and reject 257: {artifact}", () => {
+        var packed = artifact == optimizedTurfNamePath;
+        foreach (var count in new[] { 256, 257 }) {
+            var json = MappedTurf();
+            var type = json["Types"]![TypeId(json, "/turf/initialized_child/replaced")]!;
+            var proc = json["Procs"]![type["InitProc"]!.GetValue<int>()]!;
+            var template = Convert.FromBase64String(proc["Bytecode"]!.GetValue<string>());
+            Check(template[0] == (byte)DreamProcOpcode.Call && template[^7] == (byte)DreamProcOpcode.Assign &&
+                template[^1] == (byte)DreamProcOpcode.Pop, "Compiler fixture changed its super or assignment encoding.");
+            using var bytes = new MemoryStream();
+            using var writer = new BinaryWriter(bytes);
+            writer.Write(template, 0, 7); // leading super call
+            if (packed) {
+                writer.Write((byte)DreamProcOpcode.CreateListNFloats);
+                writer.Write(count);
+            }
+            for (var i = 0; i < count; i++) {
+                if (!packed) writer.Write((byte)DreamProcOpcode.PushFloat);
+                writer.Write((float)i);
+            }
+            if (!packed) {
+                writer.Write((byte)DreamProcOpcode.CreateList);
+                writer.Write(count);
+            }
+            writer.Write(template, template.Length - 7, 7); // assign choice and pop
+            proc["Bytecode"] = Convert.ToBase64String(bytes.ToArray());
+            proc["MaxStackSize"] = count + 1;
+            var project = CompiledProject.Parse(json.ToJsonString());
+            if (count == 256) {
+                var runtime = new DmRuntime(project);
+                var list = (DmList)runtime.MapCells[0].Turf.Variables["choice"].Value!;
+                Check(list.Values.Count == count && list.Get(count).Number == count - 1, "Boundary list lost an entry.");
+            } else {
+                Throws(() => new DmStartupSession(project), "literal count is invalid or exceeds 256");
+            }
+        }
+    }));
+}
 
 tests.Add(("static turf layer preserves finite values and normalizes nonnumbers before New", () => {
     var runtime = new DmRuntime(CompiledProject.Load(turfNamePath)); runtime.Boot();
@@ -1000,16 +1170,15 @@ tests.Add(("cached initializeLater defaults cannot bypass later executable initi
 }));
 tests.Add(("cold default conversion preserves ancestor error order and rejected values", () => {
     var json = JsonNode.Parse(File.ReadAllText(path))!;
-    var turf = json["Types"]![TypeId(json, "/turf")]!;
-    var floor = json["Types"]![TypeId(json, "/turf/floor")]!;
-    turf["Variables"]!["unsupported_default"] = new JsonObject { ["type"] = 2, ["value"] = 0 };
-    floor["Variables"]!["unsupported_default"] = 0; // must not hide an unsupported ancestor value
-    floor["InitProc"] = 1;
-    foreach (var definition in json["Maps"]![0]!["CellDefinitions"]!.AsObject())
-        definition.Value!["Turf"]!["Type"] = TypeId(json, "/turf/floor");
+    // World still uses the ordinary guarded default constructor. Its root ancestor must be converted first.
+    var root = json["Types"]![TypeId(json, "/")]!;
+    var world = json["Types"]![TypeId(json, "/world")]!;
+    root["Variables"] = new JsonObject { ["unsupported_default"] = new JsonObject { ["type"] = 2, ["value"] = 0 } };
+    world["Variables"]!["unsupported_default"] = 0;
+    world["InitProc"] = 1;
     Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Compiler value kind 2");
-    turf["InitProc"] = 1;
-    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers are not implemented: /turf");
+    root["InitProc"] = 1;
+    Throws(() => new DmRuntime(CompiledProject.Parse(json.ToJsonString())), "Type initializers are not implemented: /.");
 }));
 
 

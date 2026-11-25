@@ -88,16 +88,22 @@ public sealed class DmTextFileSnapshot {
     public string? ReadText(string path) => ReadText(path, static _ => { });
 
     internal string? ReadText(string path, Action<int> work) {
+        if (path is null || path.Length > DmFileInventory.MaximumPathLength)
+            throw new CompatibilityException("File snapshot path length limit exceeded.");
+        // All granted paths were validated as exact regular files in this immutable
+        // inventory before the snapshot was published. A matching text can be empty.
+        if (path.Length != 0 && !path.EndsWith('/')) {
+            var low = 0; var high = _paths.Length;
+            while (low < high) {
+                var middle = low + (high - low) / 2;
+                work(1 + Math.Min(_paths[middle].Length, path.Length));
+                var order = string.CompareOrdinal(_paths[middle], path);
+                if (order == 0) return _texts[middle];
+                if (order < 0) low = middle + 1; else high = middle;
+            }
+        }
         if (!Inventory.ContainsPath(path, work)) return null;
         if (!Inventory.ContainsRegularFile(path, work)) return string.Empty;
-        var low = 0; var high = _paths.Length;
-        while (low < high) {
-            var middle = low + (high - low) / 2;
-            work(1 + Math.Min(_paths[middle].Length, path.Length));
-            var order = string.CompareOrdinal(_paths[middle], path);
-            if (order == 0) return _texts[middle];
-            if (order < 0) low = middle + 1; else high = middle;
-        }
         throw new CompatibilityException("file2text content capability excludes this tracked file.");
     }
 }

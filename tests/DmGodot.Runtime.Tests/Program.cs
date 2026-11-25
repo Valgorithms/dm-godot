@@ -3417,8 +3417,12 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
         Check(ReferenceEquals(result.Value, runtime.GetGlobal("file_snapshot_result").Value), "Text was not reused as an immutable snapshot.");
         runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("empty"));
         Check(runtime.GetGlobal("file_snapshot_result").Value is string value && value.Length == 0, "Empty file became null.");
-        runtime.InvokeGlobal("test_file_snapshot_read", new DmValue("missing"));
-        Check(runtime.GetGlobal("file_snapshot_result").IsNull, "Absent file must return null.");
+        foreach (var name in new[] { "missing", "Text", "text/" }) {
+            runtime.InvokeGlobal("test_file_snapshot_read", new DmValue(name));
+            Check(runtime.GetGlobal("file_snapshot_result").IsNull, "Absent path must return null.");
+        }
+        Throws(() => runtime.InvokeGlobal("test_file_snapshot_read",
+            new DmValue(new string('a', DmFileInventory.MaximumPathLength + 1))), "path length limit");
         foreach (var name in new[] { "dir", "dir/", "" }) {
             runtime.InvokeGlobal("test_file_snapshot_read", new DmValue(name));
             Check(runtime.GetGlobal("file_snapshot_result").Value is string directoryText && directoryText.Length == 0, "Logical root/directory must return empty text.");
@@ -3428,6 +3432,27 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
         foreach (var name in new[] { "../file", "/file", "C:/file", ".git/config" })
             Throws(() => runtime.InvokeGlobal("test_file_snapshot_read", new DmValue(name)), "path");
         Throws(() => runtime.InvokeGlobal("test_file_snapshot_read", new DmValue(new DmResource(null!))), "embedded resource bytes");
+    }));
+    tests.Add(($"file2text charges one exact grant comparison and the decoded result: {artifact}", () => {
+        var project = CompiledProject.Load(artifact);
+        var inventory = new DmFileInventory(["a"]);
+        var prefix = new string('x', 128);
+        var expected = prefix + "😀\n";
+        var texts = new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]> {
+            ["a"] = System.Text.Encoding.UTF8.GetBytes(prefix + "😀\r\n") });
+        // One argument load and the call precede the native work. Assignment, pop and return follow it.
+        const int throughCall = 2, afterCall = 3;
+        var nativeWork = 1 + "a".Length + expected.Length;
+        var exact = new DmRuntime(project, inventory, texts) { InstructionBudget = throughCall + nativeWork + afterCall };
+        exact.Boot();
+        exact.InvokeGlobal("test_file_snapshot_read", new DmValue(new string('a', 1)));
+        Check((string)exact.GetGlobal("file_snapshot_result").Value! == expected, "Exact-budget text read changed its result.");
+
+        var oneShort = new DmRuntime(project, inventory, texts) { InstructionBudget = throughCall + nativeWork - 1 };
+        oneShort.Boot();
+        oneShort.InvokeGlobal("test_file_snapshot", new DmValue("a"));
+        Throws(() => oneShort.InvokeGlobal("test_file_snapshot_read", new DmValue("a")), "file2text work budget");
+        Check(oneShort.GetGlobal("file_snapshot_result").Number == 1, "A failed text read replaced the prior result.");
     }));
     tests.Add(($"text default denial, identity binding and atomic work guards: {artifact}", () => {
         var project = CompiledProject.Load(artifact);

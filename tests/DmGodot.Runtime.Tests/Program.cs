@@ -3322,6 +3322,26 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
         Throws(() => bounded.InvokeGlobal("test_file_snapshot", new DmValue(new string('x', 20))), "path work budget");
         Throws(() => empty.InvokeGlobal("test_file_snapshot", new DmValue(new string('x', 4097))), "path length");
     }));
+    tests.Add(($"fexists charges each ordinal comparison for an exact inventory file: {artifact}", () => {
+        var prefix = new string('x', 48);
+        var first = prefix + "a";
+        var inventory = new DmFileInventory([first, prefix + "b", prefix + "c"]);
+        var project = CompiledProject.Load(artifact);
+        var query = new DmValue(new string(first.AsSpan()));
+        // The query compares against the middle file, then the first. Each comparison is charged before it runs.
+        const int throughCall = 2, afterCall = 3;
+        var lookupWork = 2 * (1 + first.Length);
+        var exact = new DmRuntime(project, inventory) { InstructionBudget = throughCall + lookupWork + afterCall };
+        exact.Boot();
+        exact.InvokeGlobal("test_file_snapshot", query);
+        Check(exact.GetGlobal("file_snapshot_result").Number == 1, "Exact-budget file lookup failed.");
+
+        var oneShort = new DmRuntime(project, inventory) { InstructionBudget = throughCall + lookupWork - 1 };
+        oneShort.Boot();
+        oneShort.InvokeGlobal("test_file_snapshot", new DmValue("missing"));
+        Throws(() => oneShort.InvokeGlobal("test_file_snapshot", query), "fexists path work budget");
+        Check(oneShort.GetGlobal("file_snapshot_result").Value is 0f, "Failed lookup replaced the prior result.");
+    }));
     tests.Add(($"file snapshot bounded shared-prefix lookup preserves prior results: {artifact}", () => {
         var prefix = new string('n', 128);
         var inventory = new DmFileInventory(Enumerable.Range(0, 32).Select(i => prefix + i.ToString("D2") + "/entry.txt"));

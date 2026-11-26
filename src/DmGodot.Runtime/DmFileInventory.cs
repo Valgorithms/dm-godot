@@ -62,7 +62,7 @@ public sealed class DmFileInventory {
             // Any stored ancestor denotes a file or blocked link, not a directory.
             for (var end = 0; end < path.Length; end++) {
                 Work(1);
-                if (path[end] == '/' && Contains(_entries, path.AsSpan(0, end), Work))
+                if (path[end] == '/' && TryFind(_entries, path.AsSpan(0, end), Work, out _))
                     throw new CompatibilityException("Contradictory file inventory path hierarchy.");
             }
         }
@@ -87,49 +87,50 @@ public sealed class DmFileInventory {
         }
     }
 
-    private static int LowerBound(string[] entries, ReadOnlySpan<char> query, Action<int> work) {
+    // On a miss, index is the insertion position in ordinal order.
+    private static bool TryFind(string[] entries, ReadOnlySpan<char> query, Action<int> work, out int index) {
         var low = 0; var high = entries.Length;
         while (low < high) {
             var middle = low + (high - low) / 2;
             work(1 + Math.Min(entries[middle].Length, query.Length));
-            if (entries[middle].AsSpan().SequenceCompareTo(query) < 0) low = middle + 1;
+            var order = entries[middle].AsSpan().SequenceCompareTo(query);
+            if (order == 0) {
+                index = middle;
+                return true;
+            }
+            if (order < 0) low = middle + 1;
             else high = middle;
         }
-        return low;
-    }
-
-    private static bool Contains(string[] entries, ReadOnlySpan<char> query, Action<int> work) {
-        var index = LowerBound(entries, query, work);
-        if (index == entries.Length) return false;
-        work(1 + Math.Min(entries[index].Length, query.Length));
-        return entries[index].AsSpan().SequenceEqual(query);
+        index = low;
+        return false;
     }
 
     public bool ContainsFile(string path) => ContainsPath(path, static _ => { });
 
     // Callers validate paths first; directories/root must never authorize content.
-    internal bool ContainsRegularFile(string path, Action<int> work) => Contains(_files, path, work);
+    internal bool ContainsRegularFile(string path, Action<int> work) => TryFind(_files, path, work, out _);
 
     internal bool ContainsPath(string path, Action<int> work) {
         if (path is null || path.Length > MaximumPathLength)
             throw new CompatibilityException("File snapshot path length limit exceeded.");
+        var trailing = path.EndsWith('/');
+        // Construction validated every exact regular file and excluded blocked ancestors.
+        if (path.Length != 0 && !trailing && TryFind(_files, path, work, out _)) return true;
         work(1 + path.Length * 2); // Character validation and component traversal.
         ValidatePath(path);
         if (path.Length == 0) return true; // Explicitly configured logical root.
-        var trailing = path.EndsWith('/');
         var length = trailing ? path.Length - 1 : path.Length;
         var name = path.AsSpan(0, length);
-        if (Contains(_blocked, name, work))
+        if (TryFind(_blocked, name, work, out _))
             throw new CompatibilityException("File snapshot query targets an unsupported symlink or submodule path.");
         for (var i = 0; i < length; i++) {
             work(1);
-            if (path[i] == '/' && Contains(_blocked, path.AsSpan(0, i), work))
+            if (path[i] == '/' && TryFind(_blocked, path.AsSpan(0, i), work, out _))
                 throw new CompatibilityException("File snapshot query targets an unsupported symlink or submodule path.");
         }
-        if (!trailing && Contains(_files, name, work)) return true;
         work(length + 1); // Charge the sole bounded prefix allocation before copying.
         var prefix = string.Concat(name, "/");
-        var next = LowerBound(_entries, prefix, work);
+        TryFind(_entries, prefix, work, out var next);
         if (next == _entries.Length) return false;
         work(1 + prefix.Length);
         return _entries[next].StartsWith(prefix, StringComparison.Ordinal);

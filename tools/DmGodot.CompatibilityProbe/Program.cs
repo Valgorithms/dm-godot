@@ -6,6 +6,7 @@ using DmGodot.Runtime;
 // A bounded compatibility measurement. This executable has no Host reference,
 // network listener, world ticking loop, native service adapter or save access.
 const int globalDispatchBatchSize = 256;
+var globalProfile = DmGlobalInitializationProfile.Standard;
 var phase = "artifact_load";
 var status = "unexpected_error";
 string? artifactHash = null;
@@ -18,6 +19,12 @@ DmGlobalWork? globalWork = null;
 var elapsed = Stopwatch.StartNew();
 var exitCode = 1;
 try {
+    if (args.Length > 0 && args[0] == "--extended-globals") {
+        globalProfile = DmGlobalInitializationProfile.Extended;
+        args = args[1..];
+    }
+    if (Array.IndexOf(args, "--extended-globals") >= 0)
+        throw new ArgumentException("--extended-globals may appear only once, before the artifact.");
     string? fileManifest = null, contentAllowlist = null, iconManifest = null;
     if (args.Length != 1) {
         if (args.Length is not (7 or 9 or 11) || args[3] != "--source-revision" || args[5] != "--source-tree")
@@ -181,7 +188,7 @@ try {
         }
     }
     phase = "runtime_construct";
-    using var session = new DmStartupSession(project, inventory, textFiles, mapIcons: mapIcons);
+    using var session = new DmStartupSession(project, inventory, textFiles, default, mapIcons, globalProfile);
     phase = "boot";
     try {
         while (!session.AdvanceGlobals(globalDispatchBatchSize)) {
@@ -229,6 +236,7 @@ Console.WriteLine(JsonSerializer.Serialize(new {
     file_inventory_sha256 = inventoryHash,
     map_icon_inventory_sha256 = mapIconHash,
     instruction_budget = DmRuntime.DefaultInstructionBudget,
+    global_work_budget = (int)globalProfile,
     global_step_work = globalWork?.StepSpent,
     global_work_remaining = globalWork?.Remaining,
     configured_gc_heap_hard_limit = Environment.GetEnvironmentVariable("DOTNET_GCHeapHardLimit"),

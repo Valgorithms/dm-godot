@@ -218,6 +218,85 @@ tests.Add(("global work includes native charges and is conserved across dispatch
     }
 }));
 
+DmStartupSession ProfileSession(CompiledProject project, DmTextFileSnapshot texts) =>
+    new(project, startupInventory, texts, default, null, DmGlobalInitializationProfile.Extended);
+
+DmTextFileSnapshot ProfileText(int length) => new(startupInventory, new Dictionary<string, byte[]> {
+    ["startup.txt"] = System.Text.Encoding.ASCII.GetBytes(new string('x', length))
+});
+
+tests.Add(("extended globals admit separate bounded calls and conserve work across dispatch slices", () => {
+    var texts = ProfileText(44_000);
+    var project = StartupProject(semanticsPath, globalInitializer: "test_startup_profile_text");
+    using var standard = new DmStartupSession(project, startupInventory, texts);
+    Throws(() => standard.Advance(), "splittext work budget");
+    StartupError<InvalidOperationException>(() => standard.Advance());
+
+    int? referenceCost = null;
+    foreach (var quota in new[] { 1, 256 }) {
+        using var session = ProfileSession(project, texts);
+        var remaining = 200_000;
+        bool complete;
+        do {
+            complete = session.AdvanceGlobals(quota);
+            var work = session.GlobalWork ?? throw new Exception("Missing extended global work report.");
+            Check(work.StepSpent > 0 && remaining - work.StepSpent == work.Remaining,
+                "Changing the slice boundary lost global work.");
+            remaining = work.Remaining;
+        } while (!complete);
+        var cost = 200_000 - remaining;
+        Check(cost > 100_000 && remaining > 0 && (referenceCost is null || cost == referenceCost),
+            "Unexpected cumulative work across extended dispatch slices.");
+        referenceCost = cost;
+        var published = session.Advance() ?? throw new Exception("Completed startup failed to publish.");
+        var fields = (DmList)published.GetGlobal("split_result").Value!;
+        Check(fields.Values.Count == 1 && Equals(fields.Values[0].Value, texts.ReadText("startup.txt")),
+            "Slicing changed the completed split.");
+        Throws(() => published.InvokeGlobal("test_startup_profile_text"), "splittext work budget");
+    }
+}));
+
+tests.Add(("extended globals reject an oversized single dispatch with cumulative work left", () => {
+    const int length = 52_000;
+    using var session = ProfileSession(StartupProject(semanticsPath, globalInitializer: "test_startup_profile_text"),
+        ProfileText(length));
+    Throws(() => session.Advance(), "splittext work budget");
+    // The 52k source scan fits the atomic allowance. Copying its single field would take
+    // another 52k and exceeds that allowance even though that much cumulative work remains.
+    Check(session.GlobalWork is { } work && work.StepSpent + work.Remaining == 200_000 &&
+        work.StepSpent >= 2 * length && work.Remaining >= length, "The native fault lost or overcharged work.");
+    StartupError<InvalidOperationException>(() => session.Advance());
+}));
+
+tests.Add(("extended globals retain a finite cumulative ceiling and reject undefined profiles", () => {
+    var project = StartupProject(semanticsPath, globalInitializer: "test_dispatch_spin");
+    StartupError<ArgumentOutOfRangeException>(() => new DmStartupSession(project, null, null, default, null,
+        (DmGlobalInitializationProfile)200_001));
+    using var session = ProfileSession(project, startupText);
+    Check(!session.AdvanceGlobals(100_000) && session.GlobalWork is { StepSpent: 100_000, Remaining: 100_000 },
+        "The first slice did not consume its share of the extended allowance.");
+    Throws(() => session.AdvanceGlobals(100_001), "Instruction budget exhausted");
+    Check(session.GlobalWork is { StepSpent: 100_000, Remaining: 0 }, "The cumulative ceiling reset across slices.");
+    StartupError<InvalidOperationException>(() => session.Advance());
+}));
+
+tests.Add(("world.New inherits at most the ordinary allowance and the global remainder", () => {
+    var texts = ProfileText(44_000);
+    using var capped = ProfileSession(StartupProject(semanticsPath, globalInitializer: "test_arithmetic",
+        worldInitializer: "test_startup_profile_text"), texts);
+    Check(capped.AdvanceGlobals(int.MaxValue) && capped.GlobalWork is { Remaining: > 100_000 },
+        "The light global initializer should leave more than the ordinary allowance.");
+    Throws(() => capped.Advance(), "splittext work budget");
+    StartupError<InvalidOperationException>(() => capped.Advance());
+
+    using var nearlySpent = ProfileSession(StartupProject(semanticsPath, globalInitializer: "test_startup_profile_text",
+        worldInitializer: "test_startup_global_init"), texts);
+    Check(nearlySpent.AdvanceGlobals(int.MaxValue) && nearlySpent.GlobalWork is { Remaining: > 0 and < 44_000 },
+        "The heavy initializer should leave less than one more file return.");
+    Throws(() => nearlySpent.Advance(), "file2text work budget");
+    StartupError<InvalidOperationException>(() => nearlySpent.Advance());
+}));
+
 tests.Add(("an absent global initializer reports zero work on its first advance", () => {
     var json = JsonNode.Parse(File.ReadAllText(semanticsPath))!;
     json["GlobalInitProc"] = null;
@@ -324,8 +403,10 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
         var project = StartupProject(artifact, globalInitializer: initializer, worldInitializer: "test_dispatch_world");
         var direct = new DmRuntime(project); direct.Boot();
         int oneAtATime = 0;
-        foreach (var quota in new[] { 1, 7, int.MaxValue }) {
-            using var session = new DmStartupSession(project);
+        const DmGlobalInitializationProfile standard = DmGlobalInitializationProfile.Standard;
+        foreach (var (quota, profile) in new[] { (1, standard), (7, standard), (int.MaxValue, standard),
+            (7, DmGlobalInitializationProfile.Extended) }) {
+            using var session = new DmStartupSession(project, null, null, default, null, profile);
             int calls = 0;
             bool complete;
             do {
@@ -335,6 +416,7 @@ foreach (var artifact in new[] { semanticsPath, optimizedPath }) {
             } while (!complete);
             if (quota == 1) oneAtATime = calls;
             else Check(calls == (oneAtATime - 1) / quota + 1, "Dispatch count depends on the host's slice size.");
+            Check(session.GlobalWork?.Remaining == (int)profile - oneAtATime, "Nested dispatch work changed with the global profile.");
             Check(session.LogCount == 4 && session.PendingThreads == 2, "DM yield or queued work was mistaken for a host pause.");
             Check(session.AdvanceGlobals(1) && session.LogCount == 4 && session.PendingThreads == 2,
                 "Polling global completion executed new work.");

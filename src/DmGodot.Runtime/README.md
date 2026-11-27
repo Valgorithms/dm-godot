@@ -195,7 +195,20 @@ The compatibility probe constructs a fresh runtime inside a disposable
 then calls `Advance()` to run mapped callbacks, `world.New()` and the initial
 queue drain and take ownership of the completed runtime. Callers using only
 `Advance()` can still run global initialization in one call and transfer the
-world in the next. Synchronous `Boot()` uses the same interpreter and budgets.
+world in the next. Synchronous `Boot()` and a standard session use the same
+interpreter and work limits.
+
+Sessions default to 100,000 work units. Select `DmGlobalInitializationProfile.Extended`
+to allow 200,000 cumulative units during global initialization. Each dispatch,
+including an atomic native call, can spend at most 100,000 units and must fit
+the remaining balance. After globals finish, map callbacks and `world.New()`
+share the smaller of 100,000 units and that balance. Constructor work, deferred
+work and later gameplay use their ordinary budgets. Both profiles enforce the
+same cumulative list-allocation and split-output limits during boot.
+
+To select the extended profile in the compatibility probe, put `--extended-globals`
+before the artifact path. The Civ13 wrapper accepts the same flag. The report
+records the selected allowance in `global_work_budget`.
 
 `AdvanceGlobals(n)` accepts a positive dispatch count. A dispatch is one opcode,
 construction stage or implicit frame return. Nested calls and immediate-spawn

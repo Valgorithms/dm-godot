@@ -56,6 +56,8 @@ def capture_probe(command: list[str], timeout: float = TIMEOUT_SECONDS, expected
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", type=Path, default=ROOT / "build" / "civ13" / "civ13.json")
+    parser.add_argument("--extended-globals", action="store_true",
+                        help="Use 200,000 cumulative work units for global initialization (default 100,000).")
     parser.add_argument("--tracked-source-files", action="store_true",
                         help="Opt in to a pinned Git-tree file-existence snapshot (not live filesystem access).")
     parser.add_argument("--content-allowlist", type=Path, help="Explicit pinned public Git-blob content capability; requires --tracked-source-files.")
@@ -72,7 +74,10 @@ def main() -> int:
             raise ValueError("Artifact differs from compilation provenance.")
         if args.content_allowlist is not None and not args.tracked_source_files:
             raise ValueError("Content allowlist requires tracked source inventory.")
-        command = [find_dotnet(), str(PROBE_DLL), str(artifact)]
+        command = [find_dotnet(), str(PROBE_DLL)]
+        if args.extended_globals:
+            command.append("--extended-globals")
+        command.append(str(artifact))
         snapshot = None
         manifest_hash = None
         content_summary = None

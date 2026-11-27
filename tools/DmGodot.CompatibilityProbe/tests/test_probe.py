@@ -21,11 +21,11 @@ class ProbeTests(unittest.TestCase):
         cls.dotnet = find_dotnet()
         cls.smoke = json.loads((ROOT / "build" / "probe-smoke.json").read_text())
 
-    def run_artifact(self, artifact, expected_digest=None):
+    def run_artifact(self, artifact, expected_digest=None, *, probe_options=()):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "probe.json"
             path.write_text(json.dumps(artifact))
-            return capture_probe([self.dotnet, str(PROBE_DLL), str(path)], timeout=15, expected_digest=expected_digest)
+            return capture_probe([self.dotnet, str(PROBE_DLL), *probe_options, str(path)], timeout=15, expected_digest=expected_digest)
 
     def clone_smoke(self):
         return json.loads(json.dumps(self.smoke))
@@ -95,6 +95,33 @@ class ProbeTests(unittest.TestCase):
                 else:
                     self.assertGreater(report["pending_threads"], 0)
 
+    def test_extended_profile_completes_a_longer_global_initializer(self):
+        artifact = self.clone_smoke()
+        code = bytes([0x11, 0x51]) * 50_000 + bytes([0x11, 0x10])
+        artifact["GlobalInitProc"] = {"Name": "long_global_init", "SourceInfo": [],
+                                      "Bytecode": base64.b64encode(code).decode()}
+        standard = self.run_artifact(artifact)
+        self.assertEqual((standard["runtime_status"], standard["phase"]), ("blocked", "boot"))
+        self.assertEqual((standard["global_work_budget"], standard["global_work_remaining"]), (100_000, 0))
+        extended = self.run_artifact(artifact, probe_options=["--extended-globals"])
+        self.assertEqual((extended["runtime_status"], extended["phase"]), ("boot_returned", "boot"))
+        self.assertEqual(extended["instruction_budget"], 100_000)
+        self.assertEqual((extended["global_work_budget"], extended["global_work_remaining"]),
+                         (200_000, 200_000 - len(code)))
+
+    def test_extended_profile_requires_one_leading_flag_and_an_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "smoke.json"
+            artifact.write_text(json.dumps(self.smoke))
+            for args in (["--extended-globals"], [str(artifact), "--extended-globals"],
+                         ["--extended-globals", "--extended-globals", str(artifact)]):
+                with self.subTest(args=args):
+                    report = capture_probe([self.dotnet, str(PROBE_DLL), *args], timeout=15)
+                    self.assertEqual((report["measurement_status"], report["probe_exit_code"]), ("error", 1))
+                    error = json.loads(report["stdout_tail"])
+                    self.assertEqual(error["exception_type"], "System.ArgumentException")
+                    self.assertIsNone(error["artifact_sha256"])
+
     def test_instruction_budget_bounds_boot(self):
         artifact = self.clone_smoke()
         self.world_new(artifact)["Bytecode"] = base64.b64encode(bytes([0x0e, 0, 0, 0, 0])).decode()
@@ -150,6 +177,9 @@ class ProbeTests(unittest.TestCase):
             report = capture_probe(command, timeout=15, expected_digest=digest)
             self.assertEqual(report["runtime_status"], "boot_returned")
             self.assertEqual(report["file_inventory_sha256"], hashlib.sha256(manifest.read_bytes()).hexdigest())
+            extended = capture_probe(command[:2] + ["--extended-globals"] + command[2:], timeout=15,
+                                     expected_digest=digest, expected_inventory_hash=report["file_inventory_sha256"])
+            self.assertEqual((extended["runtime_status"], extended["global_work_budget"]), ("boot_returned", 200_000))
             mismatch = capture_probe(command, timeout=15, expected_inventory_hash="0" * 64)
             self.assertEqual(mismatch["reason"], "file_inventory_hash_mismatch")
             for key, wrong in (("source_revision", "3" * 40), ("source_tree", "3" * 40), ("artifact_sha256", "0" * 64)):

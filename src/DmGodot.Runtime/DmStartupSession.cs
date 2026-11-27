@@ -1,5 +1,11 @@
 namespace DmGodot.Runtime;
 
+/// <summary>Finite cumulative work allowances for the global initializer of an owned startup session.</summary>
+public enum DmGlobalInitializationProfile {
+    Standard = DmRuntime.DefaultInstructionBudget,
+    Extended = 2 * DmRuntime.DefaultInstructionBudget
+}
+
 /// <summary>Admitted work units in one global-initializer step and the remaining cumulative allowance.</summary>
 public readonly record struct DmGlobalWork(int StepSpent, int Remaining);
 
@@ -7,6 +13,7 @@ public readonly record struct DmGlobalWork(int StepSpent, int Remaining);
 /// and the initial deferred work have completed. Dispose an abandoned session.</summary>
 public sealed class DmStartupSession : IDisposable {
     private readonly object _gate = new();
+    private readonly DmGlobalInitializationProfile _globalProfile;
     private DmRuntime? _candidate;
     private CancellationToken _cancellation;
     private CancellationTokenRegistration _registration;
@@ -27,7 +34,14 @@ public sealed class DmStartupSession : IDisposable {
         : this(project, fileInventory, textFiles, cancellationToken, null) { }
 
     public DmStartupSession(CompiledProject project, DmFileInventory? fileInventory = null,
-        DmTextFileSnapshot? textFiles = null, CancellationToken cancellationToken = default, DmMapIconInventory? mapIcons = null) {
+        DmTextFileSnapshot? textFiles = null, CancellationToken cancellationToken = default, DmMapIconInventory? mapIcons = null)
+        : this(project, fileInventory, textFiles, cancellationToken, mapIcons, DmGlobalInitializationProfile.Standard) { }
+
+    public DmStartupSession(CompiledProject project, DmFileInventory? fileInventory, DmTextFileSnapshot? textFiles,
+        CancellationToken cancellationToken, DmMapIconInventory? mapIcons, DmGlobalInitializationProfile globalProfile) {
+        if (globalProfile is not (DmGlobalInitializationProfile.Standard or DmGlobalInitializationProfile.Extended))
+            throw new ArgumentOutOfRangeException(nameof(globalProfile));
+        _globalProfile = globalProfile;
         _candidate = new DmRuntime(project, fileInventory, textFiles, cancellationToken, mapIcons);
         _cancellation = cancellationToken;
         if (cancellationToken.CanBeCanceled) {
@@ -65,7 +79,7 @@ public sealed class DmStartupSession : IDisposable {
             _cancellation.ThrowIfCancellationRequested();
             if (runtime is null) throw new InvalidOperationException("The startup session has closed.");
             if (globalsOnly || !_initializedGlobals) {
-                if (!_initializedGlobals) _initializedGlobals = runtime.AdvanceGlobalInitialization(maxDispatches);
+                if (!_initializedGlobals) _initializedGlobals = runtime.AdvanceGlobalInitialization(maxDispatches, _globalProfile);
                 Interlocked.Exchange(ref _candidate, runtime);
                 // If cancellation ran while the runtime was local, undo this park.
                 _cancellation.ThrowIfCancellationRequested();

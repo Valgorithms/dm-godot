@@ -136,14 +136,15 @@ public sealed partial class DmRuntime {
         FinishBoot();
     }
 
-    internal bool AdvanceGlobalInitialization(long maxDispatches) {
+    internal bool AdvanceGlobalInitialization(long maxDispatches,
+        DmGlobalInitializationProfile profile = DmGlobalInitializationProfile.Standard) {
         _startupCancellation.ThrowIfCancellationRequested();
         var fiber = _parkedGlobalInitializer;
         _parkedGlobalInitializer = null;
         if (fiber is null) {
             if (_booted) throw new InvalidOperationException("The world has already booted.");
             _booted = true;
-            _budget = InstructionBudget;
+            _budget = profile == DmGlobalInitializationProfile.Extended ? (int)profile : InstructionBudget;
             _listAllocationRemaining = ListAllocationLimit;
             _splitTextOutputBytesRemaining = SplitTextOutputByteLimit;
         }
@@ -151,7 +152,7 @@ public sealed partial class DmRuntime {
         try {
             if (fiber is null && Data.GlobalInitProc is { } init) fiber = new Fiber(new Frame(init, null, []));
             if (fiber is not null) {
-                if (!ExecuteDispatches(fiber, ref maxDispatches)) {
+                if (!ExecuteGlobalDispatches(fiber, maxDispatches)) {
                     _parkedGlobalInitializer = fiber;
                     return false;
                 }
@@ -166,8 +167,27 @@ public sealed partial class DmRuntime {
         }
     }
 
+    private bool ExecuteGlobalDispatches(Fiber fiber, long maxDispatches) {
+        // Each native runs inside its calling dispatch. While the cumulative balance is larger
+        // than the ordinary allowance, lend one dispatch at most that allowance.
+        while (_budget > InstructionBudget && maxDispatches > 0) {
+            var reserve = _budget - InstructionBudget;
+            _budget = InstructionBudget;
+            long oneDispatch = 1;
+            try {
+                if (ExecuteDispatches(fiber, ref oneDispatch)) return true;
+            } finally {
+                _budget = reserve + Math.Max(0, _budget);
+            }
+            maxDispatches--;
+        }
+        return ExecuteDispatches(fiber, ref maxDispatches);
+    }
+
     internal void FinishBoot() {
         _startupCancellation.ThrowIfCancellationRequested();
+        // Only globals can spend the extended allowance. Callbacks share at most one ordinary budget.
+        _budget = Math.Min(_budget, InstructionBudget);
         // Each callback is an independent root: execute its prefix now, but do not
         // drain deferred work until all map callbacks and world.New have started.
         var visitedAreas = new HashSet<DmObject>();

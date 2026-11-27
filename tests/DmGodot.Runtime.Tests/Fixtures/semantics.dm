@@ -560,6 +560,11 @@ var/split_result
     spawn(0)
         split_result = splittext("split-boot-placeholder", ",")
 
+// Selected as a startup body by the host-side budget profile tests.
+/proc/test_startup_profile_text()
+    split_result = splittext(file2text("startup.txt"), ",")
+    file_snapshot_result = file2text("startup.txt")
+
 // Selected as global initialization only by the startup-session tests.
 /proc/test_startup_global_init()
     init_count = 1

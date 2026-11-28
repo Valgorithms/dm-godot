@@ -558,13 +558,14 @@ Decoding follows bounded BYOND 516.1688 byte-fixture evidence, not the incompati
 OpenDream replacement-decoder behavior: truncate at the first NUL byte, remove a
 leading UTF-8 BOM, decode strict valid UTF-8, and remove all carriage returns.
 If strict UTF-8 decoding fails without a leading UTF-8 BOM, the supported Latin-1
-subset requires each high byte to follow an ASCII letter and precede either another
-ASCII letter or LF. Before LF, the supported range is 0x80 through 0xFE. BYOND
-preserved the raw 0xFF byte at that boundary. The decoder checks the original
-bytes before removing carriage returns. Other malformed sequences raise a compatibility error, including adjacent
-high bytes, high bytes at EOF and high bytes immediately before CRLF. BYOND
-516.1688 fixtures cover all 128 high-byte values in both positions and the
-complete contents of both approved name files.
+subset requires each high byte to follow an ASCII letter. Between ASCII letters,
+the supported range is 0x80 through 0xFF. Before LF or at the end of the text,
+the range is 0x80 through 0xFE. Both physical EOF and the first NUL end the text.
+BYOND preserves a raw 0xFF at these word endings, so the snapshot rejects that
+case. Validation precedes carriage-return removal. Other unsupported byte sequences,
+including adjacent high bytes and a high byte immediately before CRLF, raise a
+compatibility error. BYOND 516.1688 fixtures cover each of the 128 high bytes at
+these boundaries and the complete pinned Dutch first-name file ending in 0xEB.
 
 The target probe grants `config/names/first_male.txt` and `config/names/first_female.txt`
 from the pinned public Civ13 source. Each regular Git blob ID, byte length and SHA-256

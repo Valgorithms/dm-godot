@@ -68,10 +68,12 @@ public sealed class DmTextFileSnapshot {
         }
         return text.Replace("\r", "", StringComparison.Ordinal);
     }
-    // BYOND 516.1688 maps 0x80..0xFE before LF to Latin-1. Its 0xFF result differs.
-    private static bool IsSupportedLatin1Byte(ReadOnlySpan<byte> bytes, int i) =>
-        i > 0 && i + 1 < bytes.Length && AsciiLetter(bytes[i - 1]) &&
-        (AsciiLetter(bytes[i + 1]) || (bytes[i] != 0xff && bytes[i + 1] == (byte)'\n'));
+    // BYOND 516.1688 preserves raw 0xFF before LF and at end of text (EOF or the first NUL).
+    private static bool IsSupportedLatin1Byte(ReadOnlySpan<byte> bytes, int i) {
+        if (i == 0 || !AsciiLetter(bytes[i - 1])) return false;
+        if (i + 1 == bytes.Length || bytes[i + 1] == (byte)'\n') return bytes[i] != 0xff;
+        return AsciiLetter(bytes[i + 1]);
+    }
     private static bool AsciiLetter(byte value) => value is >= (byte)'A' and <= (byte)'Z' or >= (byte)'a' and <= (byte)'z';
 
     // Strict UTF-8 and the supported Latin-1 fallback both produce well-formed

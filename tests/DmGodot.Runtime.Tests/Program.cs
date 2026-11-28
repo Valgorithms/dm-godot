@@ -3634,7 +3634,7 @@ tests.Add(("text normalization handles valid Unicode and measured byte boundarie
     foreach (var bytes in new[] {
         new byte[] { 0xc3, 0xa9, 124, 0xff }, new byte[] { 0xff, 124, 0xc3, 0xa9 },
         new byte[] { 0xff, 0, 65 }, new byte[] { 0xff, 0xfe, 104, 0 },
-        new byte[] { 0xef, 0xbb, 0xbf, 120, 0xe9, 121 }, new byte[] { 120, 0xe9 },
+        new byte[] { 0xef, 0xbb, 0xbf, 120, 0xe9, 121 },
         new byte[] { 120, 0xe9, 0xe8, 121 }
     }) Throws(() => new DmTextFileSnapshot(inventory, new Dictionary<string, byte[]> { ["value"] = bytes }), "encoding is not supported");
 }));
@@ -3656,7 +3656,7 @@ tests.Add(("file2text decodes isolated Latin-1 bytes at LF-terminated word endin
         .Equals("6fbb80cffec8513a187b207c52cfa554", StringComparison.OrdinalIgnoreCase),
         "Line-ending text differs from the native length or digest.");
     foreach (var bytes in new byte[][] {
-        [65, 0xff, 10], [0xeb, 10], [10, 0xeb, 10], [32, 0xeb, 10], [65, 0xeb], [65, 0xeb, 13, 10],
+        [65, 0xff, 10], [0xeb, 10], [10, 0xeb, 10], [32, 0xeb, 10], [65, 0xeb, 13, 10],
         [65, 0xeb, 0xff, 10], [0xef, 0xbb, 0xbf, 65, 0xeb, 10], [0xc3, 0xab, 10, 65, 0xeb, 10]
     }) Throws(() => Decode(bytes), "encoding is not supported");
     var limit = DmTextFileSnapshot.MaximumFileBytes;
@@ -3664,6 +3664,25 @@ tests.Add(("file2text decodes isolated Latin-1 bytes at LF-terminated word endin
     atLimit[^2] = 0xeb; atLimit[^1] = 10;
     Check(Decode(atLimit).Length == limit, "Exact per-file boundary rejected.");
     Throws(() => Decode([.. atLimit, 10]), "per-file");
+}));
+tests.Add(("file2text decodes measured Latin-1 word endings at EOF or NUL", () => {
+    var inventory = new DmFileInventory(["value"]);
+    string Decode(byte[] bytes) => new DmTextFileSnapshot(inventory,
+        new Dictionary<string, byte[]> { ["value"] = bytes }).ReadText("value")!;
+    for (var high = 0x80; high <= 0xfe; high++) {
+        Check(Decode([(byte)'A', (byte)high]) == "A" + (char)high, $"Physical EOF changed byte {high:X2}.");
+        Check(Decode([(byte)'z', (byte)high, 0, 0xff]) == "z" + (char)high, $"NUL boundary changed byte {high:X2}.");
+    }
+    Check(Decode([65, 0xc3, 0xab]) == "Aë", "Valid terminal UTF-8 must retain its decoded value.");
+    foreach (var bytes in new byte[][] {
+        [65, 0xff], [65, 0xff, 0, 65], [0xeb], [32, 0xeb], [49, 0xeb, 0],
+        [65, 0x80, 0xeb], [0xef, 0xbb, 0xbf, 65, 0xeb], [65, 0xc3, 0xab, 65, 0xeb]
+    }) Throws(() => Decode(bytes), "encoding is not supported");
+    var atLimit = Enumerable.Repeat((byte)'a', DmTextFileSnapshot.MaximumFileBytes).ToArray();
+    atLimit[^1] = 0xeb;
+    var text = Decode(atLimit);
+    Check(text.Length == atLimit.Length && text[^1] == 'ë', "Terminal byte at the raw input limit was lost.");
+    Throws(() => Decode([.. atLimit, 0]), "per-file");
 }));
 tests.Add(("text snapshot ingress limits cover raw, decoded and entry bounds", () => {
     var directoryInventory = new DmFileInventory(["dir/child"]);
